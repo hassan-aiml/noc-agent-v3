@@ -1,0 +1,40 @@
+{
+  "sites": [
+    {
+      "site_id": "NORTHPARK_MALL",
+      "site_name": "Northpark Center Mall",
+      "controller_ip": "10.0.45.1",
+      "main_hub": {
+        "id": "MH-01",
+        "label": "Main Hub",
+        "expansion_hubs": [
+          {
+            "id": "EH-01",
+            "location": "Food Court",
+            "is_critical": false,
+            "provisioned_remotes": 5,
+            "remotes": ["RU-01", "RU-02", "RU-03", "RU-04", "RU-05"]
+          },
+          {
+            "id": "EH-02",
+            "location": "Security Center",
+            "is_critical": true,
+            "provisioned_remotes": 3,
+            "remotes": ["RU-06", "RU-07", "RU-08"]
+          }
+        ]
+      }
+    }
+  ],
+  "pois": [
+    { "id": "POI-VTX-B2",  "label": "Vertex B2 (1900 MHz)",   "carrier": "VTX", "carrier_name": "Vertex Wireless",   "band": "B2",  "feeds": ["MH-01"] },
+    { "id": "POI-VTX-B4",  "label": "Vertex B4 (1700 MHz)",   "carrier": "VTX", "carrier_name": "Vertex Wireless",   "band": "B4",  "feeds": ["MH-01"] },
+    { "id": "POI-VTX-B13", "label": "Vertex B13 (700 MHz)",   "carrier": "VTX", "carrier_name": "Vertex Wireless",   "band": "B13", "feeds": ["MH-01"] },
+    { "id": "POI-PKC-B2",  "label": "PeakCell B2 (1900 MHz)", "carrier": "PKC", "carrier_name": "PeakCell Networks", "band": "B2",  "feeds": ["MH-01"] },
+    { "id": "POI-PKC-B4",  "label": "PeakCell B4 (1700 MHz)", "carrier": "PKC", "carrier_name": "PeakCell Networks", "band": "B4",  "feeds": ["MH-01"] },
+    { "id": "POI-PKC-B13", "label": "PeakCell B13 (700 MHz)",  "carrier": "PKC", "carrier_name": "PeakCell Networks", "band": "B13", "feeds": ["MH-01"] },
+    { "id": "POI-MDN-B2",  "label": "Meridian B2 (1900 MHz)", "carrier": "MDN", "carrier_name": "Meridian Mobile",   "band": "B2",  "feeds": ["MH-01"] },
+    { "id": "POI-MDN-B4",  "label": "Meridian B4 (1700 MHz)", "carrier": "MDN", "carrier_name": "Meridian Mobile",   "band": "B4",  "feeds": ["MH-01"] },
+    { "id": "POI-MDN-N41", "label": "Meridian n41 (3.5 GHz)", "carrier": "MDN", "carrier_name": "Meridian Mobile",   "band": "n41", "feeds": ["MH-01"] }
+  ]
+}
