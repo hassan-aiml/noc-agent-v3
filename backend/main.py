@@ -1,6 +1,16 @@
 """
 main.py — FastAPI entry point for NOC Triage Agent v3
 """
+import sys
+from pathlib import Path
+
+# Ensure backend/ is on sys.path so bare module imports resolve correctly
+# whether the app is launched as `uvicorn main:app` (from backend/) or
+# `uvicorn backend.main:app` (from project root).
+_BACKEND = Path(__file__).resolve().parent
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel

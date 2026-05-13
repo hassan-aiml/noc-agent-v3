@@ -15,12 +15,20 @@ Supabase persistence:
 from __future__ import annotations
 
 import os
+import sys
 import uuid
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+# Ensure backend/ is on sys.path so sibling-module imports work regardless
+# of whether the app is launched from inside backend/ or from the project root.
+_BACKEND = Path(__file__).resolve().parent.parent
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
 
 from ingestion_agent import run_ingestion
 from correlation_engine_v3 import run_correlation
