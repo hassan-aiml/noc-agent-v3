@@ -6,8 +6,8 @@ Pipeline:
   YAML raw alarms → ingestion_agent → correlation_engine_v3 → terminal summary
 
 Usage:
-    python backend/demo_run.py             # SCN-001 (default)
-    python backend/demo_run.py SCN-002     # optional scenario override
+    python backend/demo_run.py             # all scenarios (SCN-001, SCN-002, SCN-003)
+    python backend/demo_run.py SCN-002     # single scenario
     python backend/demo_run.py SCN-003
 """
 
@@ -395,22 +395,12 @@ def print_correlation_result(results: list[dict]) -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────
 
-def main() -> None:
-    scenario_id = sys.argv[1] if len(sys.argv) > 1 else "SCN-001"
-
-    scenarios_path = _BACKEND / "tests" / "ground_truth" / "scenarios.yaml"
-    with open(scenarios_path) as f:
-        all_scenarios = yaml.safe_load(f)["scenarios"]
-
-    scenario = next((s for s in all_scenarios if s["id"] == scenario_id), None)
-    if scenario is None:
-        print(f"Scenario {scenario_id!r} not found.")
-        sys.exit(1)
-
+def _run_scenario(scenario: dict) -> None:
+    scn_id = scenario["id"]
     print()
     print(_c(BOLD + CYAN, "=" * 62))
     print(_c(BOLD + CYAN, "  NOC Triage Agent v3 — Demo Run"))
-    print(_c(BOLD + CYAN, f"  Scenario: {scenario_id} — {scenario['name']}"))
+    print(_c(BOLD + CYAN, f"  Scenario: {scn_id} — {scenario['name']}"))
     print(_c(BOLD + CYAN, "=" * 62))
 
     raw_alarms   = scenario["raw_alarms"]
@@ -440,6 +430,30 @@ def main() -> None:
         print(f"\n  {_c(YELLOW, 'Correlation warnings:')} {corr_out['errors']}")
     print_correlation_result(results)
 
+
+def main() -> None:
+    scenarios_path = _BACKEND / "tests" / "ground_truth" / "scenarios.yaml"
+    with open(scenarios_path) as f:
+        all_scenarios = yaml.safe_load(f)["scenarios"]
+
+    if len(sys.argv) > 1:
+        scenario_id = sys.argv[1]
+        scenario = next((s for s in all_scenarios if s["id"] == scenario_id), None)
+        if scenario is None:
+            print(f"Scenario {scenario_id!r} not found.")
+            sys.exit(1)
+        scenarios_to_run = [scenario]
+    else:
+        scenarios_to_run = all_scenarios
+
+    for i, scenario in enumerate(scenarios_to_run):
+        _run_scenario(scenario)
+        if i < len(scenarios_to_run) - 1:
+            print()
+            print(_c(BOLD, "─" * 62))
+            print()
+
+    print()
     print(_c(BOLD, "─" * 62))
     print(_c(BOLD + GREEN, "  Demo complete."))
     print(_c(BOLD, "─" * 62))

@@ -1,6 +1,5 @@
 """
-main.py — FastAPI entry point for NOC Triage Agent v2
-Scenarios updated to use canonical alarm codes matching new runbook schema.
+main.py — FastAPI entry point for NOC Triage Agent v3
 """
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,8 +9,11 @@ import dataclasses
 from topology_manager import TopologyManager
 from correlation_engine import CorrelationEngine
 from triage_logic import generate_triage_brief
+from routers.triage import router as triage_router
 
-app = FastAPI(title="NOC Triage Agent v2")
+app = FastAPI(title="NOC Triage Agent v3")
+
+app.include_router(triage_router)
 
 app.add_middleware(
     CORSMiddleware,
