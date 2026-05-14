@@ -1,0 +1,520 @@
+# NOC Triage Agent v3 - Ground Truth Test Scenarios
+# ==========================================================
+# Aggregation window: 15 minutes (configurable)
+# OEMs:
+#   Stratum: IU, MU, EU, OM, RU
+#   Orion:   POI, MH, EH, OTRx, RAU
+# Severity scale:
+#   Stratum: critical, major, minor, warning, info (5 levels)
+#   Orion:   critical, major, minor, info (4 levels — no warning)
+#   Canonical: critical, major, minor, warning, info
+# Carrier/band matrix:
+#   Vertex Wireless:   B2, B4, B13 (LTE)
+#   PeakCell Networks: B2, B4, B13 (LTE)
+#   Meridian Mobile:   B2, B4 (LTE), n41 (NR/TDD — requires sync)
+# ==========================================================
+# OEM component name mapping (canonical -> OEM):
+#   POI:            IU (Stratum)         POI (Orion)
+#   MAIN_HUB:       MU (Stratum)         MH (Orion)
+#   EXPANSION_HUB:  EU (Stratum)         EH (Orion)
+#   OPTICAL_MODULE: OM (Stratum)         OTRx (Orion)
+#   REMOTE:         RU (Stratum)         RAU (Orion)
+# ==========================================================
+# Site topology:
+#   SITE-ATX-001  Austin Domain Tower    Stratum  1 POI   0 EH   5 RUs
+#   SITE-ATX-002  Austin Midtown Plaza   Orion    3 POIs  1 EH   8 RAUs
+#   SITE-ATX-003  Austin Rainey Street   Stratum  9 POIs  2 EUs  11 RUs
+#   SITE-ATX-004  Austin South Congress  Orion    3 POIs  1 EH   6 RAUs
+# ==========================================================
+
+scenarios:
+
+  # ----------------------------------------------------------
+  # SCN-001: Single OEM Stratum - optical link cascade
+  # Site: Austin Domain Tower (simple, 1 carrier, no EH)
+  # Tests: Stratum normalization, alarm aggregation,
+  #        hub->remote cascade pattern
+  # ----------------------------------------------------------
+  - id: SCN-001
+    name: "Single OEM Stratum - optical link cascade"
+    description: >
+      Stratum alarms, single site, single zone. Main hub loses optical link,
+      triggering downstream remote unit offline alarms. All within 15-min window.
+      Should aggregate into one site event. Root cause traceable to hub OM failure.
+    oem: stratum
+    site_id: SITE-ATX-001
+    site_name: "Austin Domain Tower"
+    zone_id: ZONE-B2
+    aggregation_window_minutes: 15
+
+    # Carrier context for this site
+    carriers:
+      - carrier: Vertex Wireless
+        bands: [B4]
+        tech: LTE
+        pois: [IU-01]
+
+    # Site topology context
+    topology:
+      poi: IU-01
+      main_hub: MU-01
+      optical_modules:
+        - id: OM-1
+          parent: MU-01
+          remotes: [RU-01, RU-02, RU-03]
+        - id: OM-2
+          parent: MU-01
+          remotes: [RU-04, RU-05]
+      expansion_hubs: []
+
+    raw_alarms:
+      - alarm_id: STR-20260503-001
+        das_oem: stratum
+        site_id: SITE-ATX-001
+        site_name: "Austin Domain Tower"
+        zone_id: ZONE-B2
+        alarm_name: "Optical Link Failure"
+        alarm_code: "STR-OPT-001"
+        source_equipment_type: OM        # Stratum component name
+        source_equipment_id: OM-1
+        parent_equipment_id: MU-01
+        severity: critical
+        timestamp: "2026-05-04T08:01:00Z"
+
+      - alarm_id: STR-20260503-002
+        das_oem: stratum
+        site_id: SITE-ATX-001
+        site_name: "Austin Domain Tower"
+        zone_id: ZONE-B2
+        alarm_name: "Remote Unit Offline"
+        alarm_code: "STR-RU-003"
+        source_equipment_type: RU
+        source_equipment_id: RU-01
+        parent_equipment_id: OM-1
+        severity: critical
+        timestamp: "2026-05-04T08:03:00Z"
+
+      - alarm_id: STR-20260503-003
+        das_oem: stratum
+        site_id: SITE-ATX-001
+        site_name: "Austin Domain Tower"
+        zone_id: ZONE-B2
+        alarm_name: "Remote Unit Offline"
+        alarm_code: "STR-RU-003"
+        source_equipment_type: RU
+        source_equipment_id: RU-02
+        parent_equipment_id: OM-1
+        severity: critical
+        timestamp: "2026-05-04T08:04:30Z"
+
+      - alarm_id: STR-20260503-004
+        das_oem: stratum
+        site_id: SITE-ATX-001
+        site_name: "Austin Domain Tower"
+        zone_id: ZONE-B2
+        alarm_name: "Remote Unit Offline"
+        alarm_code: "STR-RU-003"
+        source_equipment_type: RU
+        source_equipment_id: RU-03
+        parent_equipment_id: OM-1
+        severity: critical
+        timestamp: "2026-05-04T08:05:00Z"
+
+      - alarm_id: STR-20260503-005
+        das_oem: stratum
+        site_id: SITE-ATX-001
+        site_name: "Austin Domain Tower"
+        zone_id: ZONE-B2
+        alarm_name: "Downlink Power Low"
+        alarm_code: "STR-DL-007"
+        source_equipment_type: RU
+        source_equipment_id: RU-04
+        parent_equipment_id: OM-2
+        severity: major
+        timestamp: "2026-05-04T08:06:00Z"
+
+    expected_output:
+      site_id: SITE-ATX-001
+      zone_id: ZONE-B2
+      alarm_count: 5
+      dominant_severity: critical
+      alarm_category: ELEMENT_OFFLINE
+      probable_root_cause: "Optical module OM-1 failure on MU-01 causing downstream RU-01, RU-02, RU-03 loss"
+      blast_radius:
+        affected_equipment: [OM-1, RU-01, RU-02, RU-03]
+        affected_carriers: [Vertex Wireless]
+        affected_bands: [B4]
+        service_impact: "Vertex B4 LTE coverage loss — ZONE-B2"
+      aggregated: true
+      aggregation_window_start: "2026-05-04T08:01:00Z"
+      aggregation_window_end: "2026-05-04T08:16:00Z"
+      normalization_applied: true
+      field_mappings_resolved:
+        - oem_field: source_equipment_type
+          oem_value: OM
+          canonical_value: OPTICAL_MODULE
+        - oem_field: source_equipment_type
+          oem_value: RU
+          canonical_value: REMOTE
+
+
+  # ----------------------------------------------------------
+  # SCN-002: Single OEM Orion - normalization + severity gap
+  # Site: Austin Midtown Plaza (medium, 2 carriers, 1 EH)
+  # Tests: Orion field name mapping (fault_description->alarm_name),
+  #        Orion component name mapping (RAU->REMOTE, OTRx->OPTICAL_MODULE),
+  #        severity gap handling (Orion has no warning->maps to minor)
+  # ----------------------------------------------------------
+  - id: SCN-002
+    name: "Single OEM Orion - normalization and severity gap"
+    description: >
+      Orion-only alarms, single site, single zone. Tests normalization of
+      Orion-specific field names (fault_description->alarm_name) and component
+      names (RAU, OTRx, MH, EH). Orion severity gap: no warning level,
+      warning-class alarms arrive as minor. Should normalize into canonical
+      model and aggregate as one site event.
+    oem: orion
+    site_id: SITE-ATX-002
+    site_name: "Austin Midtown Plaza"
+    zone_id: ZONE-L4
+    aggregation_window_minutes: 15
+
+    carriers:
+      - carrier: Vertex Wireless
+        bands: [B2, B13]
+        tech: LTE
+        pois: [POI-01, POI-02]
+      - carrier: PeakCell Networks
+        bands: [B4]
+        tech: LTE
+        pois: [POI-03]
+
+    topology:
+      pois: [POI-01, POI-02, POI-03]
+      main_hub: MH-01
+      optical_modules:
+        - id: OTRx-1
+          parent: MH-01
+          remotes: [RAU-01, RAU-02]
+          expansion_hub: EH-01
+        - id: OTRx-2
+          parent: MH-01
+          remotes: [RAU-07, RAU-08]
+      expansion_hubs:
+        - id: EH-01
+          parent: OTRx-1
+          optical_modules:
+            - id: OTRx-3
+              remotes: [RAU-03, RAU-04]
+            - id: OTRx-4
+              remotes: [RAU-05, RAU-06]
+
+    raw_alarms:
+      - alarm_id: ORN-20260503-010
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "Timing Reference Lost"   # Orion field -> maps to alarm_name
+        alarm_code: "ORN-TIM-004"
+        source_equipment_type: MH                    # Orion component -> maps to MAIN_HUB
+        source_equipment_id: MH-01
+        parent_equipment_id: null
+        severity: major
+        timestamp: "2026-05-04T09:00:00Z"
+
+      - alarm_id: ORN-20260503-011
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "Remote Unit Communication Loss"
+        alarm_code: "ORN-RU-007"
+        source_equipment_type: RAU                   # Orion component -> maps to REMOTE
+        source_equipment_id: RAU-03
+        parent_equipment_id: OTRx-3
+        severity: critical
+        timestamp: "2026-05-04T09:04:00Z"
+
+      - alarm_id: ORN-20260503-012
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "Downlink Output Degraded"
+        alarm_code: "ORN-DL-009"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-04
+        parent_equipment_id: OTRx-3
+        severity: minor                              # Orion gap: would be warning in Stratum
+        timestamp: "2026-05-04T09:08:00Z"
+
+      - alarm_id: ORN-20260503-013
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "Remote Unit Communication Loss"
+        alarm_code: "ORN-RU-007"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-05
+        parent_equipment_id: OTRx-4
+        severity: critical
+        timestamp: "2026-05-04T09:11:00Z"
+
+    expected_output:
+      site_id: SITE-ATX-002
+      zone_id: ZONE-L4
+      alarm_count: 4
+      dominant_severity: critical
+      alarm_category: TDD_SYNC_LOST
+      probable_root_cause: "Timing reference loss on MH-01 cascading to RAU communication failures on EH-01"
+      blast_radius:
+        affected_equipment: [MH-01, EH-01, RAU-03, RAU-04, RAU-05]
+        affected_carriers: [Vertex Wireless, PeakCell Networks]
+        affected_bands: [B2, B13, B4]
+        service_impact: "Sync loss affecting all carriers on EH-01 zone — Meridian n41 NR at highest risk"
+      aggregated: true
+      normalization_applied: true
+      field_mappings_resolved:
+        - oem_field: fault_description
+          canonical_field: alarm_name
+        - oem_field: source_equipment_type
+          oem_value: MH
+          canonical_value: MAIN_HUB
+        - oem_field: source_equipment_type
+          oem_value: RAU
+          canonical_value: REMOTE
+        - oem_field: source_equipment_type
+          oem_value: OTRx
+          canonical_value: OPTICAL_MODULE
+        - oem_field: source_equipment_type
+          oem_value: EH
+          canonical_value: EXPANSION_HUB
+      severity_gaps_resolved:
+        - oem: orion
+          missing_severity: warning
+          alarm_id: ORN-20260503-012
+          arrived_as: minor
+          canonical_severity: minor
+          note: "Orion has no warning level. Minor is canonical floor for degraded-but-active alarms."
+      aggregation_window_start: "2026-05-04T09:00:00Z"
+      aggregation_window_end: "2026-05-04T09:15:00Z"
+
+
+  # ----------------------------------------------------------
+  # SCN-003: Multi-site noise vs signal - aggregation boundary
+  # Sites: Austin Rainey Street (real event) +
+  #        Austin South Congress (stray alarm)
+  # Tests: Aggregation does not bleed across sites,
+  #        stray alarm detection,
+  #        mixed Stratum + Orion in same batch
+  # ----------------------------------------------------------
+  - id: SCN-003
+    name: "Multi-site noise vs signal - aggregation boundary"
+    description: >
+      Two sites firing simultaneously. SITE-ATX-003 has a real correlated
+      event — power supply failure on MU-01 cascading to multiple RUs across
+      two EUs. SITE-ATX-004 has a single stray alarm on RAU-03 with no
+      correlated activity. Aggregation must not bleed across sites.
+      SITE-ATX-003 aggregates into one site event.
+      SITE-ATX-004 flagged as isolated stray alarm.
+    aggregation_window_minutes: 15
+
+    # Site 3 topology context
+    site_atx_003:
+      oem: stratum
+      site_id: SITE-ATX-003
+      site_name: "Austin Rainey Street"
+      carriers:
+        - carrier: Vertex Wireless
+          bands: [B2, B4, B13]
+          tech: LTE
+          pois: [IU-01, IU-02, IU-03]
+        - carrier: PeakCell Networks
+          bands: [B2, B4, B13]
+          tech: LTE
+          pois: [IU-04, IU-05, IU-06]
+        - carrier: Meridian Mobile
+          bands: [B2, B4, n41]
+          tech: [LTE, LTE, NR_TDD]
+          pois: [IU-07, IU-08, IU-09]
+      topology:
+        pois: [IU-01, IU-02, IU-03, IU-04, IU-05, IU-06, IU-07, IU-08, IU-09]
+        main_hub: MU-01
+        optical_modules:
+          - id: OM-1
+            parent: MU-01
+            remotes: [RU-01, RU-02]
+            expansion_hub: EU-01
+          - id: OM-2
+            parent: MU-01
+            remotes: [RU-03]
+            expansion_hub: EU-02
+        expansion_hubs:
+          - id: EU-01
+            label: "Exp. Hub A — floors 1-4"
+            parent: OM-1
+            optical_modules:
+              - id: OM-3
+                remotes: [RU-04, RU-05]
+              - id: OM-4
+                remotes: [RU-06, RU-07]
+          - id: EU-02
+            label: "Exp. Hub B — floors 5-8"
+            parent: OM-2
+            optical_modules:
+              - id: OM-5
+                remotes: [RU-08, RU-09]
+              - id: OM-6
+                remotes: [RU-10, RU-11]
+
+    # Site 4 topology context
+    site_atx_004:
+      oem: orion
+      site_id: SITE-ATX-004
+      site_name: "Austin South Congress"
+      carriers:
+        - carrier: Meridian Mobile
+          bands: [B2, B4, n41]
+          tech: [LTE, LTE, NR_TDD]
+          pois: [POI-01, POI-02, POI-03]
+      topology:
+        pois: [POI-01, POI-02, POI-03]
+        main_hub: MH-01
+        optical_modules:
+          - id: OTRx-1
+            parent: MH-01
+            remotes: [RAU-01]
+            expansion_hub: EH-01
+          - id: OTRx-2
+            parent: MH-01
+            remotes: [RAU-02, RAU-03]
+        expansion_hubs:
+          - id: EH-01
+            parent: OTRx-1
+            optical_modules:
+              - id: OTRx-3
+                remotes: [RAU-04, RAU-05]
+              - id: OTRx-4
+                remotes: [RAU-06]
+
+    raw_alarms:
+
+      # --- SITE-ATX-003: real event — power failure cascade ---
+      - alarm_id: STR-20260503-020
+        das_oem: stratum
+        site_id: SITE-ATX-003
+        site_name: "Austin Rainey Street"
+        zone_id: ZONE-G1
+        alarm_name: "Power Supply Failure"
+        alarm_code: "STR-PWR-005"
+        source_equipment_type: MU
+        source_equipment_id: MU-01
+        parent_equipment_id: null
+        severity: critical
+        timestamp: "2026-05-04T10:00:00Z"
+
+      - alarm_id: STR-20260503-021
+        das_oem: stratum
+        site_id: SITE-ATX-003
+        site_name: "Austin Rainey Street"
+        zone_id: ZONE-G1
+        alarm_name: "Remote Unit Offline"
+        alarm_code: "STR-RU-003"
+        source_equipment_type: RU
+        source_equipment_id: RU-01
+        parent_equipment_id: OM-1
+        severity: critical
+        timestamp: "2026-05-04T10:02:00Z"
+
+      - alarm_id: STR-20260503-022
+        das_oem: stratum
+        site_id: SITE-ATX-003
+        site_name: "Austin Rainey Street"
+        zone_id: ZONE-G1
+        alarm_name: "Remote Unit Offline"
+        alarm_code: "STR-RU-003"
+        source_equipment_type: RU
+        source_equipment_id: RU-02
+        parent_equipment_id: OM-1
+        severity: critical
+        timestamp: "2026-05-04T10:03:30Z"
+
+      - alarm_id: STR-20260503-023
+        das_oem: stratum
+        site_id: SITE-ATX-003
+        site_name: "Austin Rainey Street"
+        zone_id: ZONE-G1
+        alarm_name: "Power Input Low"
+        alarm_code: "STR-PWR-006"
+        source_equipment_type: MU
+        source_equipment_id: MU-01
+        parent_equipment_id: null
+        severity: major
+        timestamp: "2026-05-04T10:05:00Z"
+
+      - alarm_id: STR-20260503-024
+        das_oem: stratum
+        site_id: SITE-ATX-003
+        site_name: "Austin Rainey Street"
+        zone_id: ZONE-G1
+        alarm_name: "Remote Unit Offline"
+        alarm_code: "STR-RU-003"
+        source_equipment_type: RU
+        source_equipment_id: RU-04
+        parent_equipment_id: OM-3
+        severity: critical
+        timestamp: "2026-05-04T10:07:00Z"
+
+      # --- SITE-ATX-004: stray alarm only ---
+      - alarm_id: ORN-20260503-030
+        das_oem: orion
+        site_id: SITE-ATX-004
+        site_name: "Austin South Congress"
+        zone_id: ZONE-R3
+        fault_description: "Uplink Noise Rise"
+        alarm_code: "ORN-UL-011"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-03
+        parent_equipment_id: OTRx-2
+        severity: minor
+        timestamp: "2026-05-04T10:07:00Z"
+
+    expected_output:
+
+      - site_id: SITE-ATX-003
+        zone_id: ZONE-G1
+        alarm_count: 5
+        dominant_severity: critical
+        alarm_category: ELEMENT_OFFLINE
+        probable_root_cause: "Power supply failure on MU-01 causing full site outage — RU-01, RU-02 on OM-1 and RU-04 on EU-01/OM-3 offline"
+        blast_radius:
+          affected_equipment: [MU-01, RU-01, RU-02, RU-04]
+          affected_carriers: [Vertex Wireless, PeakCell Networks, Meridian Mobile]
+          affected_bands: [B2, B4, B13, n41]
+          service_impact: "Full site outage — all 3 carriers, all bands including Meridian n41 NR/TDD"
+        aggregated: true
+        aggregation_window_start: "2026-05-04T10:00:00Z"
+        aggregation_window_end: "2026-05-04T10:15:00Z"
+
+      - site_id: SITE-ATX-004
+        zone_id: ZONE-R3
+        alarm_count: 1
+        dominant_severity: minor
+        alarm_category: UL_NOISE_RISE
+        aggregated: false
+        stray_alarm: true
+        probable_root_cause: "Isolated uplink noise on RAU-03 — no correlated alarms in 15-min window"
+        blast_radius:
+          affected_equipment: [RAU-03]
+          affected_carriers: [Meridian Mobile]
+          affected_bands: [B2, B4, n41]
+          service_impact: "Degraded uplink on RAU-03 only — service partially impacted"
+        normalization_applied: true
+        field_mappings_resolved:
+          - oem_field: fault_description
+            canonical_field: alarm_name
+          - oem_field: source_equipment_type
+            oem_value: RAU
+            canonical_value: REMOTE
