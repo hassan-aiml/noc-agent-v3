@@ -118,26 +118,6 @@ export default function App() {
     setTriageResults([]);
   }
 
-  // Drive the streaming animation
-  useEffect(() => {
-    if (phase !== 'streaming' || allAlarms.length === 0) return;
-
-    timerRefs.current.forEach(clearTimeout);
-    timerRefs.current = [];
-
-    const timers = [];
-    allAlarms.forEach((_, i) => {
-      timers.push(setTimeout(() => setVisibleCount(i + 1), i * 300));
-    });
-    // After all alarms shown, reveal Panel 2
-    timers.push(setTimeout(() => setPhase('normalizing'), allAlarms.length * 300 + 200));
-    // After short pause, reveal Panel 3
-    timers.push(setTimeout(() => setPhase('done'), allAlarms.length * 300 + 800));
-
-    timerRefs.current = timers;
-    return () => timers.forEach(clearTimeout);
-  }, [phase, allAlarms]);
-
   const runScenario = useCallback(async () => {
     const scn = SITE_SCENARIOS[activeSite];
     if (!scn) return;
@@ -178,6 +158,20 @@ export default function App() {
       setAllAlarms(flat);
       setVisibleCount(0);
       setPhase('streaming');
+
+      // Schedule animation timers here — NOT in a useEffect.
+      // Using useEffect with [phase, allAlarms] caused the cleanup to cancel
+      // the setPhase('done') timer whenever phase changed to 'normalizing'.
+      timerRefs.current.forEach(clearTimeout);
+      const timers = [];
+      flat.forEach((_, i) => {
+        timers.push(setTimeout(() => setVisibleCount(i + 1), i * 300));
+      });
+      // Panel 2 reveals after all alarms stream in
+      timers.push(setTimeout(() => setPhase('normalizing'), flat.length * 300 + 200));
+      // Panel 3 reveals shortly after Panel 2
+      timers.push(setTimeout(() => setPhase('done'), flat.length * 300 + 800));
+      timerRefs.current = timers;
     } catch (e) {
       setError(`Simulation failed: ${e.message}`);
     } finally {
