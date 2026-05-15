@@ -38,6 +38,7 @@ CASCADE_POWER   = "POWER_CASCADE"
 CASCADE_OPTICAL = "OPTICAL_CASCADE"
 CASCADE_HUB     = "HUB_CASCADE"
 CASCADE_STRAY   = "STRAY"
+CASCADE_POI     = "POI_SIGNAL_LOSS"
 
 # Keywords for power-related hub alarms
 _POWER_KEYWORDS = ("power supply failure", "psu fault", "power input", "power fail")
@@ -138,6 +139,35 @@ class SiteTopology:
             return parent
         return None
 
+    def get_all_descendants_of_type(
+        self, root_id: str, include_types: set[str]
+    ) -> list[str]:
+        """
+        BFS from root_id; return all descendant IDs whose node_type is in include_types.
+        OMs (OPTICAL_MODULE) are traversed but NOT added to the result unless explicitly
+        included in include_types.
+        """
+        # Build children map once
+        children_map: dict[str, list[str]] = {}
+        for child, parent in self.parent_map.items():
+            children_map.setdefault(parent, []).append(child)
+
+        result: list[str] = []
+        visited: set[str] = {root_id}
+        queue: list[str] = [root_id]
+
+        while queue:
+            current = queue.pop(0)
+            for child in children_map.get(current, []):
+                if child in visited:
+                    continue
+                visited.add(child)
+                if self.node_types.get(child, "") in include_types:
+                    result.append(child)
+                queue.append(child)  # always traverse, even if type not included
+
+        return result
+
     # ── Carrier helpers ───────────────────────────────────────────────
 
     def get_all_carriers(self) -> list[str]:
@@ -218,6 +248,11 @@ def _detect_cascade_type(
     alarm_list = site_event.get("alarm_list", [])
     alarm_count = site_event.get("alarm_count", 1)
     stray = site_event.get("stray_alarm", False)
+
+    # POI cascade takes priority — single POI alarm is a distinct fault type, not a stray
+    root_type_check = root_alarm.get("source_equipment_type", "")
+    if root_type_check == "POI":
+        return CASCADE_POI
 
     if stray or alarm_count == 1:
         return CASCADE_STRAY
@@ -434,24 +469,60 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
         zone_id = analysis["zone_id"]
 
         root_id = root_alarm["source_equipment_id"]
+        root_type = root_alarm.get("source_equipment_type", "")
 
         # ── affected_equipment ──────────────────────────────────────
-        equip: list[str] = [root_id]
-        equip.extend(inferred_hubs)
-        equip.extend(a["source_equipment_id"] for a in downstream)
-        affected_equipment = _deduplicate_ordered(equip)
+        # FIX 1: Full topology traversal for hub/module root causes;
+        #        OMs are always filtered out from the blast radius.
+        if topo and root_type == "MAIN_HUB":
+            all_desc = topo.get_all_descendants_of_type(root_id, {"EXPANSION_HUB", "REMOTE"})
+            affected_equipment = _deduplicate_ordered([root_id] + all_desc)
+        elif topo and root_type == "EXPANSION_HUB":
+            all_desc = topo.get_all_descendants_of_type(root_id, {"REMOTE"})
+            affected_equipment = _deduplicate_ordered([root_id] + all_desc)
+        elif topo and root_type == "OPTICAL_MODULE":
+            all_desc = topo.get_all_descendants_of_type(root_id, {"REMOTE"})
+            affected_equipment = _deduplicate_ordered([root_id] + all_desc)
+        elif cascade_type == CASCADE_POI:
+            affected_equipment = [root_id]
+        else:
+            # STRAY or no topology: use alarmed equipment only
+            equip: list[str] = [root_id]
+            equip.extend(inferred_hubs)
+            equip.extend(a["source_equipment_id"] for a in downstream)
+            affected_equipment = _deduplicate_ordered(equip)
 
         # ── carriers / bands ────────────────────────────────────────
         if topo:
-            affected_carriers = topo.get_all_carriers()
-            affected_bands = topo.get_all_bands()
+            all_carriers = topo.get_all_carriers()
+            all_bands = topo.get_all_bands()
             tdd_carriers = topo.get_tdd_carriers()
             n_carriers = topo.carrier_count()
         else:
-            affected_carriers = []
-            affected_bands = []
+            all_carriers = []
+            all_bands = []
             tdd_carriers = []
             n_carriers = 0
+
+        # ── POI cascade: scope to the specific carrier/band served by this POI ──
+        poi_carrier_name = ""
+        poi_band = ""
+        if cascade_type == CASCADE_POI and topo:
+            for c in topo.carriers:
+                poi_ids = c.get("pois", [])
+                if root_id in poi_ids:
+                    idx = poi_ids.index(root_id)
+                    bands = c.get("bands", [])
+                    poi_band = bands[idx] if idx < len(bands) else (bands[0] if bands else "")
+                    poi_carrier_name = c.get("carrier", "")
+                    break
+
+        if cascade_type == CASCADE_POI:
+            affected_carriers = [poi_carrier_name] if poi_carrier_name else all_carriers
+            affected_bands = [poi_band] if poi_band else all_bands
+        else:
+            affected_carriers = all_carriers
+            affected_bands = all_bands
 
         # ── service_impact ──────────────────────────────────────────
         if cascade_type == CASCADE_OPTICAL and topo and n_carriers == 1:
@@ -465,13 +536,22 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
             )
 
         elif cascade_type == CASCADE_SYNC:
-            # Engineering note: sync/timing failures are highest risk for NR TDD carriers.
-            # "Meridian n41 NR" is the canonical TDD carrier name in this NOC environment.
+            # FIX 2: Only mention TDD risk if TDD carriers actually exist at this site.
             eh_id = inferred_hubs[0] if inferred_hubs else root_id
-            service_impact = (
-                f"Sync loss affecting all carriers on {eh_id} zone"
-                " — Meridian n41 NR at highest risk"
-            )
+            if tdd_carriers:
+                tdd = tdd_carriers[0]
+                tdd_band = next(
+                    (b for b in tdd.get("bands", []) if b.startswith("n")), "n41"
+                )
+                service_impact = (
+                    f"Sync loss affecting all carriers on {eh_id} zone"
+                    f" — {tdd['carrier']} {tdd_band} NR at highest risk"
+                )
+            else:
+                service_impact = (
+                    f"Sync loss degrading all carriers on {eh_id} zone"
+                    " — all LTE carriers impacted, no TDD carriers at site"
+                )
 
         elif cascade_type in (CASCADE_POWER, CASCADE_HUB) and tdd_carriers and n_carriers > 1:
             tdd = tdd_carriers[0]
@@ -480,6 +560,12 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
             service_impact = (
                 f"Full site outage — all {n_carriers} carriers, all bands"
                 f" including {tdd['carrier']} {tdd_band} NR/TDD"
+            )
+
+        elif cascade_type == CASCADE_POI:
+            carrier_band = f"{poi_carrier_name} {poi_band}".strip()
+            service_impact = (
+                f"POI signal loss on {root_id} — {carrier_band} service degraded"
             )
 
         elif cascade_type == CASCADE_STRAY:
@@ -509,6 +595,8 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
                 "affected_carriers": affected_carriers,
                 "affected_bands": affected_bands,
                 "service_impact": service_impact,
+                "poi_carrier_name": poi_carrier_name,
+                "poi_band": poi_band,
             }
         )
 
@@ -535,6 +623,8 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
         root_parent = root_alarm.get("parent_equipment_id") or ""
         alarm_category = event.get("alarm_category", "UNKNOWN")
         dominant_sev = event.get("dominant_severity", "info")
+        poi_carrier_name = analysis.get("poi_carrier_name", "")
+        poi_band = analysis.get("poi_band", "")
 
         # ── probable_root_cause ─────────────────────────────────────
 
@@ -554,9 +644,20 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
                     downstream[0]["source_equipment_id"]
                 ) if topo and downstream else "expansion hub"
             )
+            # FIX 3: Use OEM-native remote label, not hardcoded "RAU"
+            das_oems = event.get("das_oems", [])
+            oem = das_oems[0] if das_oems else "stratum"
+            remote_label = "RAU" if oem == "orion" else "RU"
             probable_root_cause = (
                 f"Timing reference loss on {root_id}"
-                f" cascading to RAU communication failures on {eh_id}"
+                f" cascading to {remote_label} communication failures on {eh_id}"
+            )
+
+        elif cascade_type == CASCADE_POI:
+            carrier_band = f"{poi_carrier_name} {poi_band}".strip()
+            probable_root_cause = (
+                f"POI signal loss on {root_id} — {carrier_band} service degraded"
+                " (physical DAS equipment healthy)"
             )
 
         elif cascade_type == CASCADE_POWER:
@@ -593,7 +694,9 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
 
         stray = event.get("stray_alarm", False)
 
-        if alarm_category == "TDD_SYNC_LOST":
+        if cascade_type == CASCADE_POI:
+            triage_priority = "P2"
+        elif alarm_category == "TDD_SYNC_LOST":
             triage_priority = "P1"
         elif alarm_category in ("ELEMENT_OFFLINE", "POWER_FAULT") and dominant_sev == "critical":
             triage_priority = "P1"
@@ -612,7 +715,14 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
 
         # ── recommended_action ──────────────────────────────────────
 
-        if cascade_type == CASCADE_SYNC:
+        if cascade_type == CASCADE_POI:
+            carrier_band = f"{poi_carrier_name} {poi_band}".strip()
+            recommended_action = (
+                f"Check {root_id} signal levels and carrier interface. "
+                f"Contact {poi_carrier_name or 'carrier'} operations center to verify source signal. "
+                "No dispatch required until carrier confirms signal issue on their end."
+            )
+        elif cascade_type == CASCADE_SYNC:
             recommended_action = (
                 f"Notify Operations and affected TDD carrier(s) immediately. "
                 f"Check timing source at {root_id}. "
@@ -655,6 +765,9 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
         all_correlated = [root_alarm] + analysis.get("co_alarms", []) + downstream
         correlated_refs = [a["raw_alarm_ref"] for a in all_correlated]
 
+        # POI signal loss is a named fault type, not a stray — override ingestion flag
+        result_stray = False if cascade_type == CASCADE_POI else event.get("stray_alarm", False)
+
         results.append(
             {
                 "site_id": event["site_id"],
@@ -676,7 +789,7 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
                 "triage_priority": triage_priority,
                 "recommended_action": recommended_action,
                 "correlated_alarm_refs": correlated_refs,
-                "stray_alarm": event.get("stray_alarm", False),
+                "stray_alarm": result_stray,
                 "aggregated": event.get("aggregated", False),
                 "aggregation_window_start": event.get("aggregation_window_start", ""),
                 "aggregation_window_end": event.get("aggregation_window_end", ""),

@@ -294,16 +294,20 @@ def _build_topology_for_site(site_id: str) -> dict:
             "remotes": remotes,
         })
 
-    # Pseudo-EHs from top-level OMs that have direct remotes
+    # FIX 4: Group ALL direct-connect remotes (from top-level OMs) into a single
+    # virtual DIRECT hub instead of exposing individual OM nodes in the topology view.
+    direct_remotes: list[str] = []
     for om in top_level_oms:
-        direct_remotes = om.get("remotes", [])
-        if direct_remotes:
-            expansion_hubs.append({
-                "id": om["id"],
-                "location": f"Optical Module {om['id']}",
-                "is_critical": False,
-                "remotes": direct_remotes,
-            })
+        direct_remotes.extend(om.get("remotes", []))
+    if direct_remotes:
+        mh_raw = topology_dict.get("main_hub", "MH-01")
+        mh_str = mh_raw if isinstance(mh_raw, str) else mh_raw.get("id", "MH-01")
+        expansion_hubs.append({
+            "id": f"{mh_str}-DIRECT",
+            "location": "Direct Connect",
+            "is_critical": False,
+            "remotes": direct_remotes,
+        })
 
     # ── Build nodes dict ───────────────────────────────────────────────
     nodes: dict[str, dict] = {}
@@ -352,6 +356,7 @@ def _make_v2_incident(result: dict) -> dict:
         "POWER_CASCADE": "Power Cascade",
         "HUB_CASCADE": "Hub Cascade",
         "STRAY": "Isolated Alarm",
+        "POI_SIGNAL_LOSS": "POI Signal Loss",
     }
     cascade_type = result.get("cascade_type", "")
     scope_label = cascade_labels.get(cascade_type, cascade_type)
@@ -612,4 +617,6 @@ def simulate_scenario(req: SimulateRequest) -> dict:
         "triage_brief": triage_brief,
         "ingestion_meta": ingestion_meta,
         "topology": topology,
+        "site_events": site_events,   # FIX 6: Panel 2 ingestion animation
+        "results": results,           # FIX 6: Panel 3 triage detail
     }

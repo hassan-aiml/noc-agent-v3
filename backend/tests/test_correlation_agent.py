@@ -144,20 +144,23 @@ def _check_terms(name: str, text: str, required_terms: list[str]) -> AssertionRe
 
 # ── Per-scenario validation ────────────────────────────────────────────
 
-# Service impact key-term requirements per scenario/site
-_SERVICE_IMPACT_TERMS: dict[str, list] = {
-    "SITE-ATX-001/ZONE-B2": ["Vertex", "B4", ["coverage", "loss"]],
-    "SITE-ATX-002/ZONE-L4": [["sync", "Sync"], "EH-01"],
-    "SITE-ATX-003/ZONE-G1": [["outage", "all"], ["3 carriers", "all"]],
-    "SITE-ATX-004/ZONE-R3": ["RAU-03", ["partial", "degraded"]],
+# Service impact key-term requirements, keyed by (scenario_id, site/zone).
+# Each value is a list where str = must-contain, list = any-of alternatives.
+_SERVICE_IMPACT_TERMS: dict[tuple[str, str], list] = {
+    ("SCN-001", "SITE-ATX-001/ZONE-B2"): ["Vertex", "B4", ["coverage", "loss"]],
+    ("SCN-002", "SITE-ATX-002/ZONE-L4"): [["sync", "Sync"], "EH-01"],
+    ("SCN-003", "SITE-ATX-003/ZONE-G1"): [["outage", "all"], ["3 carriers", "all"]],
+    ("SCN-003", "SITE-ATX-004/ZONE-R3"): ["RAU-03", ["partial", "degraded"]],
+    ("SCN-004", "SITE-ATX-004/ZONE-R3"): ["POI-03", ["degraded", "loss"]],
 }
 
-# Key equipment IDs that MUST appear in probable_root_cause per scenario/site
-_ROOT_CAUSE_IDS: dict[str, list[str]] = {
-    "SITE-ATX-001/ZONE-B2": ["OM-1", "MU-01", "RU-01", "RU-02", "RU-03"],
-    "SITE-ATX-002/ZONE-L4": ["MH-01", "EH-01"],
-    "SITE-ATX-003/ZONE-G1": ["MU-01", "RU-01", "RU-02", "RU-04"],
-    "SITE-ATX-004/ZONE-R3": ["RAU-03"],
+# Key equipment IDs that MUST appear in probable_root_cause, keyed by (scenario_id, site/zone).
+_ROOT_CAUSE_IDS: dict[tuple[str, str], list[str]] = {
+    ("SCN-001", "SITE-ATX-001/ZONE-B2"): ["OM-1", "MU-01", "RU-01", "RU-02", "RU-03"],
+    ("SCN-002", "SITE-ATX-002/ZONE-L4"): ["MH-01", "EH-01"],
+    ("SCN-003", "SITE-ATX-003/ZONE-G1"): ["MU-01", "RU-01", "RU-02", "RU-04"],
+    ("SCN-003", "SITE-ATX-004/ZONE-R3"): ["RAU-03"],
+    ("SCN-004", "SITE-ATX-004/ZONE-R3"): ["POI-03"],
 }
 
 
@@ -165,6 +168,7 @@ def _validate_correlation_result(
     result: dict,
     expected: dict,
     label: str,
+    scn_id: str = "",
 ) -> list[AssertionResult]:
     assertions: list[AssertionResult] = []
     site_zone = f"{result.get('site_id')}/{result.get('zone_id')}"
@@ -218,7 +222,7 @@ def _validate_correlation_result(
     # blast_radius.service_impact (key term presence)
     if "service_impact" in expected_br:
         impact_text = br.get("service_impact", "")
-        terms = _SERVICE_IMPACT_TERMS.get(site_zone, [])
+        terms = _SERVICE_IMPACT_TERMS.get((scn_id, site_zone), [])
         if terms:
             assertions.append(
                 _check_terms(f"{label}: blast_radius.service_impact", impact_text, terms)
@@ -236,7 +240,7 @@ def _validate_correlation_result(
     # probable_root_cause — key equipment IDs must appear as substrings
     if "probable_root_cause" in expected:
         root_cause_text = result.get("probable_root_cause", "")
-        ids = _ROOT_CAUSE_IDS.get(site_zone, [])
+        ids = _ROOT_CAUSE_IDS.get((scn_id, site_zone), [])
         if ids:
             assertions.append(
                 _check_ids_in_text(
@@ -258,6 +262,7 @@ def _validate_correlation_result(
 
 
 def _run_scenario(scenario: dict) -> tuple[bool, list[AssertionResult]]:
+    scn_id = scenario.get("id", "")
     raw_alarms = scenario["raw_alarms"]
     window = scenario.get("aggregation_window_minutes", 15)
 
@@ -304,7 +309,7 @@ def _run_scenario(scenario: dict) -> tuple[bool, list[AssertionResult]]:
 
         all_assertions.append(AssertionResult(f"{label}: result found", True))
         all_assertions.extend(
-            _validate_correlation_result(result, expected, label)
+            _validate_correlation_result(result, expected, label, scn_id=scn_id)
         )
 
     all_passed = all(a.passed for a in all_assertions)

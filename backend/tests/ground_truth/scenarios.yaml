@@ -270,10 +270,12 @@ scenarios:
       alarm_category: TDD_SYNC_LOST
       probable_root_cause: "Timing reference loss on MH-01 cascading to RAU communication failures on EH-01"
       blast_radius:
-        affected_equipment: [MH-01, EH-01, RAU-03, RAU-04, RAU-05]
+        # FIX 1: Full topology traversal from MH-01; OMs excluded, all RAUs + EH-01 included
+        affected_equipment: [MH-01, RAU-01, RAU-02, EH-01, RAU-07, RAU-08, RAU-03, RAU-04, RAU-05, RAU-06]
         affected_carriers: [Vertex Wireless, PeakCell Networks]
         affected_bands: [B2, B13, B4]
-        service_impact: "Sync loss affecting all carriers on EH-01 zone — Meridian n41 NR at highest risk"
+        # FIX 2: No TDD carriers at this site — service_impact reflects LTE-only degradation
+        service_impact: "Sync loss degrading all carriers on EH-01 zone — all LTE carriers impacted, no TDD carriers at site"
       aggregated: true
       normalization_applied: true
       field_mappings_resolved:
@@ -490,10 +492,11 @@ scenarios:
         alarm_category: ELEMENT_OFFLINE
         probable_root_cause: "Power supply failure on MU-01 causing full site outage — RU-01, RU-02 on OM-1 and RU-04 on EU-01/OM-3 offline"
         blast_radius:
-          affected_equipment: [MU-01, RU-01, RU-02, RU-04]
+          # FIX 1: Full topology traversal from MU-01; all 11 RUs + 2 EUs, no OM nodes
+          affected_equipment: [MU-01, RU-01, RU-02, EU-01, RU-03, EU-02, RU-04, RU-05, RU-06, RU-07, RU-08, RU-09, RU-10, RU-11]
           affected_carriers: [Vertex Wireless, PeakCell Networks, Meridian Mobile]
           affected_bands: [B2, B4, B13, n41]
-          service_impact: "Full site outage — all 3 carriers, all bands including Meridian n41 NR/TDD"
+          service_impact: "Full site outage — all 3 carriers, all bands including Meridian Mobile n41 NR/TDD"
         aggregated: true
         aggregation_window_start: "2026-05-04T10:00:00Z"
         aggregation_window_end: "2026-05-04T10:15:00Z"
@@ -518,3 +521,82 @@ scenarios:
           - oem_field: source_equipment_type
             oem_value: RAU
             canonical_value: REMOTE
+
+
+  # ----------------------------------------------------------
+  # SCN-004: Single POI signal loss — Orion site
+  # Site: Austin South Congress (Orion, 3 POIs, 1 EH, 6 RAUs)
+  # Tests: POI_SIGNAL_LOSS cascade type, single-carrier scoping,
+  #        P2 priority, physical equipment healthy annotation
+  # ----------------------------------------------------------
+  - id: SCN-004
+    name: "POI signal loss — Meridian B4"
+    description: >
+      Single Orion alarm: POI-03 reports signal loss for Meridian Mobile B4.
+      Physical DAS equipment (MH-01, EH-01, RAUs) is healthy.
+      Blast radius is scoped to POI-03 and the single carrier/band it serves.
+      Expected triage priority P2 — carrier service impact, no physical fault.
+    oem: orion
+    site_id: SITE-ATX-004
+    site_name: "Austin South Congress"
+    zone_id: ZONE-R3
+    aggregation_window_minutes: 15
+
+    # POI-01→B2, POI-02→n41, POI-03→B4 (zip order matches band index)
+    carriers:
+      - carrier: Meridian Mobile
+        bands: [B2, n41, B4]
+        tech: [LTE, NR_TDD, LTE]
+        pois: [POI-01, POI-02, POI-03]
+
+    topology:
+      pois: [POI-01, POI-02, POI-03]
+      main_hub: MH-01
+      optical_modules:
+        - id: OTRx-1
+          parent: MH-01
+          remotes: [RAU-01]
+          expansion_hub: EH-01
+        - id: OTRx-2
+          parent: MH-01
+          remotes: [RAU-02, RAU-03]
+      expansion_hubs:
+        - id: EH-01
+          parent: OTRx-1
+          optical_modules:
+            - id: OTRx-3
+              remotes: [RAU-04, RAU-05]
+            - id: OTRx-4
+              remotes: [RAU-06]
+
+    raw_alarms:
+      - alarm_id: ORN-20260503-040
+        das_oem: orion
+        site_id: SITE-ATX-004
+        site_name: "Austin South Congress"
+        zone_id: ZONE-R3
+        fault_description: "POI Signal Loss"
+        alarm_code: "ORN-POI-001"
+        source_equipment_type: POI
+        source_equipment_id: POI-03
+        parent_equipment_id: null
+        severity: major
+        timestamp: "2026-05-04T11:00:00Z"
+
+    expected_output:
+      site_id: SITE-ATX-004
+      zone_id: ZONE-R3
+      alarm_count: 1
+      dominant_severity: major
+      cascade_type: POI_SIGNAL_LOSS
+      triage_priority: P2
+      root_cause_node: POI-03
+      root_cause_type: POI
+      probable_root_cause: "POI signal loss on POI-03 — Meridian Mobile B4 service degraded (physical DAS equipment healthy)"
+      blast_radius:
+        affected_equipment: [POI-03]
+        affected_carriers: [Meridian Mobile]
+        affected_bands: [B4]
+        service_impact: "POI signal loss on POI-03 — Meridian Mobile B4 service degraded"
+      stray_alarm: false
+      aggregated: false

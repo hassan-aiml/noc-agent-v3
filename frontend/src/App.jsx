@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import FlowContainer from './FlowContainer';
 import TriageTerminal from './TriageTerminal';
 
@@ -12,14 +12,24 @@ const SITES = [
 ];
 
 const SITE_SCENARIOS = {
-  'SITE-ATX-001': [{ id: 'SCN-001', label: 'Optical Link Cascade',          description: 'OM-1 — 5 alarms · Stratum',    color: '#33b1ff' }],
-  'SITE-ATX-002': [{ id: 'SCN-002', label: 'Sync Loss + Normalization',     description: 'MH-01 — 4 alarms · Orion',     color: '#f1c21b' }],
-  'SITE-ATX-003': [{ id: 'SCN-003', label: 'Power Failure — Multi-carrier', description: 'MU-01 — 5 alarms · Stratum',   color: '#fa4d56' }],
-  'SITE-ATX-004': [{ id: 'SCN-003', label: 'Stray Alarm Detection',         description: 'RAU-03 — 1 alarm · Orion',     color: '#42be65' }],
+  'SITE-ATX-001': { id: 'SCN-001', label: 'Optical Link Cascade',          color: '#33b1ff' },
+  'SITE-ATX-002': { id: 'SCN-002', label: 'Sync Loss + Normalization',     color: '#f1c21b' },
+  'SITE-ATX-003': { id: 'SCN-003', label: 'Power Failure — Multi-carrier', color: '#fa4d56' },
+  'SITE-ATX-004': { id: 'SCN-004', label: 'POI Signal Loss — Meridian B4', color: '#be95ff' },
 };
 
+const SEV_COLOR = {
+  critical: '#fa4d56',
+  major:    '#ff832b',
+  minor:    '#f1c21b',
+  warning:  '#a8a8a8',
+  info:     '#6f6f6f',
+};
+
+const PRIO_COLOR = { P1: '#fa4d56', P2: '#ff832b', P3: '#f1c21b', P4: '#42be65', P5: '#6f6f6f' };
+
 function OemBadge({ oem }) {
-  const isStratum = oem === 'STRATUM';
+  const isStratum = oem === 'STRATUM' || oem === 'stratum';
   return (
     <span style={{
       background: isStratum ? '#0d3d3d' : '#0d2d4a',
@@ -29,30 +39,56 @@ function OemBadge({ oem }) {
       fontFamily: "'JetBrains Mono', monospace",
       letterSpacing: 0.5,
     }}>
-      {oem}
+      {String(oem).toUpperCase()}
+    </span>
+  );
+}
+
+function SevBadge({ sev }) {
+  const col = SEV_COLOR[sev] || '#6f6f6f';
+  return (
+    <span style={{
+      background: col + '22',
+      border: `1px solid ${col}`,
+      color: col,
+      fontSize: 9,
+      padding: '1px 5px',
+      letterSpacing: 0.5,
+      minWidth: 52,
+      display: 'inline-block',
+      textAlign: 'center',
+    }}>
+      {String(sev).toUpperCase()}
     </span>
   );
 }
 
 export default function App() {
-  const [activeSite, setActiveSite]             = useState('SITE-ATX-001');
-  const [topology, setTopology]                 = useState(null);
-  const [incidents, setIncidents]               = useState([]);
-  const [primaryIncident, setPrimaryIncident]   = useState(null);
-  const [triageBrief, setTriageBrief]           = useState('');
-  const [loading, setLoading]                   = useState(false);
-  const [activeScenario, setActiveScenario]     = useState(null);
-  const [error, setError]                       = useState('');
-  const [ingestionMeta, setIngestionMeta]       = useState(null);
-  const [siteAlarmStatus, setSiteAlarmStatus]   = useState({
+  const [activeSite, setActiveSite]           = useState('SITE-ATX-001');
+  const [topology, setTopology]               = useState(null);
+  const [incidents, setIncidents]             = useState([]);
+  const [primaryIncident, setPrimaryIncident] = useState(null);
+  const [triageBrief, setTriageBrief]         = useState('');
+  const [loading, setLoading]                 = useState(false);
+  const [activeScenario, setActiveScenario]   = useState(null);
+  const [error, setError]                     = useState('');
+  const [ingestionMeta, setIngestionMeta]     = useState(null);
+  const [siteAlarmStatus, setSiteAlarmStatus] = useState({
     'SITE-ATX-001': false,
     'SITE-ATX-002': false,
     'SITE-ATX-003': false,
     'SITE-ATX-004': false,
   });
-  const [ingestionExpanded, setIngestionExpanded] = useState(false);
 
-  // Fetch topology whenever activeSite changes
+  // Pipeline animation state
+  const [allAlarms, setAllAlarms]           = useState([]);   // flat alarm list from site_events
+  const [visibleCount, setVisibleCount]     = useState(0);    // how many alarms shown in Panel 1
+  const [siteEvents, setSiteEvents]         = useState([]);   // for Panel 2
+  const [triageResults, setTriageResults]   = useState([]);   // for Panel 3 detail
+  const [phase, setPhase]                   = useState('idle'); // idle|streaming|normalizing|done
+  const timerRefs = useRef([]);
+
+  // Fetch topology on site change
   useEffect(() => {
     setTopology(null);
     setIncidents([]);
@@ -61,6 +97,7 @@ export default function App() {
     setActiveScenario(null);
     setIngestionMeta(null);
     setError('');
+    resetPipeline();
 
     fetch(`${API}/triage/topology?site_id=${activeSite}`)
       .then(r => {
@@ -69,34 +106,79 @@ export default function App() {
       })
       .then(setTopology)
       .catch(() => setError('Backend not reachable — start FastAPI on port 8000'));
-  }, [activeSite]);
+  }, [activeSite]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const runScenario = useCallback(async (scenarioId) => {
+  function resetPipeline() {
+    timerRefs.current.forEach(clearTimeout);
+    timerRefs.current = [];
+    setPhase('idle');
+    setAllAlarms([]);
+    setVisibleCount(0);
+    setSiteEvents([]);
+    setTriageResults([]);
+  }
+
+  // Drive the streaming animation
+  useEffect(() => {
+    if (phase !== 'streaming' || allAlarms.length === 0) return;
+
+    timerRefs.current.forEach(clearTimeout);
+    timerRefs.current = [];
+
+    const timers = [];
+    allAlarms.forEach((_, i) => {
+      timers.push(setTimeout(() => setVisibleCount(i + 1), i * 300));
+    });
+    // After all alarms shown, reveal Panel 2
+    timers.push(setTimeout(() => setPhase('normalizing'), allAlarms.length * 300 + 200));
+    // After short pause, reveal Panel 3
+    timers.push(setTimeout(() => setPhase('done'), allAlarms.length * 300 + 800));
+
+    timerRefs.current = timers;
+    return () => timers.forEach(clearTimeout);
+  }, [phase, allAlarms]);
+
+  const runScenario = useCallback(async () => {
+    const scn = SITE_SCENARIOS[activeSite];
+    if (!scn) return;
+
+    resetPipeline();
     setLoading(true);
-    setActiveScenario(scenarioId);
-    setTriageBrief('');
+    setActiveScenario(scn.id);
     setIncidents([]);
     setPrimaryIncident(null);
+    setTriageBrief('');
     setIngestionMeta(null);
     setError('');
+
     try {
       const res = await fetch(`${API}/triage/simulate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario: scenarioId, site_id: activeSite }),
+        body: JSON.stringify({ scenario: scn.id, site_id: activeSite }),
       });
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.detail || `HTTP ${res.status}`);
       }
       const data = await res.json();
+
       setIncidents(data.incidents || []);
       setPrimaryIncident(data.primary_incident || null);
       setTriageBrief(data.triage_brief || '');
       setIngestionMeta(data.ingestion_meta || null);
       setSiteAlarmStatus(prev => ({ ...prev, [activeSite]: true }));
+
+      const events = data.site_events || [];
+      setSiteEvents(events);
+      setTriageResults(data.results || []);
+
+      // Build flat alarm list for Panel 1 animation
+      const flat = events.flatMap(ev => ev.alarm_list || []);
+      setAllAlarms(flat);
+      setVisibleCount(0);
+      setPhase('streaming');
     } catch (e) {
-      console.error('Simulation error:', e);
       setError(`Simulation failed: ${e.message}`);
     } finally {
       setLoading(false);
@@ -104,6 +186,7 @@ export default function App() {
   }, [activeSite]);
 
   const resetAll = () => {
+    resetPipeline();
     setIncidents([]);
     setPrimaryIncident(null);
     setTriageBrief('');
@@ -119,7 +202,22 @@ export default function App() {
   };
 
   const currentSite = SITES.find(s => s.id === activeSite);
-  const currentScenarios = SITE_SCENARIOS[activeSite] || [];
+  const currentScn  = SITE_SCENARIOS[activeSite];
+
+  // Flatten first site_event's normalization data for Panel 2
+  const firstEvent      = siteEvents[0] || null;
+  const fieldMappings   = firstEvent?.field_mappings_resolved || [];
+  const severityGaps    = firstEvent?.severity_gaps_resolved || [];
+  const aggWindow       = firstEvent
+    ? `${firstEvent.aggregation_window_start?.slice(11, 19) || ''} → ${firstEvent.aggregation_window_end?.slice(11, 19) || ''}`
+    : '';
+
+  // Primary triage result for Panel 3 detail
+  const primaryResult = triageResults.length > 0
+    ? triageResults.reduce((a, b) =>
+        (parseInt(a.triage_priority?.[1] || 9) <= parseInt(b.triage_priority?.[1] || 9) ? a : b)
+      )
+    : null;
 
   return (
     <div style={{
@@ -134,38 +232,9 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #161616; }
-        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-track { background: #1c1c1c; }
         ::-webkit-scrollbar-thumb { background: #33b1ff44; border-radius: 3px; }
-        .scenario-btn {
-          background: #262626;
-          border: 0.5px solid #393939;
-          color: #f4f4f4;
-          padding: 12px 14px;
-          border-radius: 0px;
-          cursor: pointer;
-          text-align: left;
-          transition: all 0.2s;
-          font-family: 'JetBrains Mono', monospace;
-          font-size: 12px;
-          width: 100%;
-          margin-bottom: 1px;
-        }
-        .scenario-btn:hover { border-color: #33b1ff; background: #1a2a35; }
-        .scenario-btn.active { border-left: 2px solid #fa4d56; background: #2a1515; }
-        .reset-btn {
-          background: transparent;
-          border: 0.5px solid #393939;
-          color: #33b1ff;
-          padding: 9px 12px;
-          border-radius: 0px;
-          cursor: pointer;
-          font-family: 'JetBrains Mono', monospace;
-          font-size: 12px;
-          width: 100%;
-          transition: all 0.2s;
-        }
-        .reset-btn:hover { border-color: #33b1ff; background: #1a2a35; }
         .site-btn {
           background: transparent;
           border: none;
@@ -179,47 +248,84 @@ export default function App() {
           align-items: center;
           gap: 7px;
           transition: all 0.15s;
+          height: 100%;
         }
         .site-btn:hover { color: #c6c6c6; }
         .site-btn.active { color: #f4f4f4; border-bottom-color: #33b1ff; }
+        .run-btn {
+          background: #0f3a5a;
+          border: 1px solid #33b1ff;
+          color: #33b1ff;
+          padding: 7px 16px;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 1px;
+          transition: all 0.15s;
+        }
+        .run-btn:hover:not(:disabled) { background: #1a4a6a; }
+        .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .reset-btn {
+          background: transparent;
+          border: 1px solid #393939;
+          color: #a8a8a8;
+          padding: 7px 12px;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          transition: all 0.15s;
+        }
+        .reset-btn:hover { border-color: #6f6f6f; color: #f4f4f4; }
+        .alarm-row {
+          padding: 7px 10px;
+          border-bottom: 1px solid #1c1c1c;
+          animation: fadeIn 0.25s ease-in;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+        .panel-label {
+          font-size: 9px;
+          letter-spacing: 2px;
+          color: #525252;
+          padding: 6px 12px;
+          background: #1a1a1a;
+          border-bottom: 1px solid #2a2a2a;
+          text-transform: uppercase;
+        }
       `}</style>
 
-      {/* Top Bar */}
+      {/* ── Top Bar ── */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        padding: '0 24px',
+        padding: '0 20px',
         background: '#1c1c1c',
         borderBottom: '1px solid #393939',
         gap: 0,
         flexShrink: 0,
         height: 52,
       }}>
-        {/* Logo + title */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, paddingRight: 24, borderRight: '1px solid #393939', height: '100%' }}>
-          <span style={{ fontSize: 22 }}>🛰️</span>
+        {/* Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingRight: 20, borderRight: '1px solid #393939', height: '100%' }}>
+          <span style={{ fontSize: 20 }}>🛰️</span>
           <div>
-            <div style={{ color: '#33b1ff', fontWeight: 700, fontSize: 15, letterSpacing: 3 }}>NOC TRIAGE AGENT</div>
-            <div style={{ color: '#6f6f6f', fontSize: 11, letterSpacing: 2 }}>DIGITAL TWIN · PHASE 3</div>
+            <div style={{ color: '#33b1ff', fontWeight: 700, fontSize: 13, letterSpacing: 3 }}>NOC TRIAGE AGENT</div>
+            <div style={{ color: '#6f6f6f', fontSize: 10, letterSpacing: 2 }}>DIGITAL TWIN · PHASE 3</div>
           </div>
         </div>
 
-        {/* Site selector buttons */}
-        <div style={{ display: 'flex', alignItems: 'stretch', height: '100%' }}>
+        {/* Site selector */}
+        <div style={{ display: 'flex', alignItems: 'stretch', height: '100%', borderRight: '1px solid #393939' }}>
           {SITES.map(site => (
             <button
               key={site.id}
               className={`site-btn ${activeSite === site.id ? 'active' : ''}`}
               onClick={() => setActiveSite(site.id)}
             >
-              {/* Health dot */}
               <span style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
+                width: 7, height: 7, borderRadius: '50%',
                 background: siteAlarmStatus[site.id] ? '#fa4d56' : '#42be65',
-                display: 'inline-block',
-                flexShrink: 0,
+                display: 'inline-block', flexShrink: 0,
               }} />
               {site.shortName}
               <OemBadge oem={site.oem} />
@@ -227,195 +333,328 @@ export default function App() {
           ))}
         </div>
 
+        {/* Scenario label */}
+        {currentScn && (
+          <div style={{ paddingLeft: 16, fontSize: 11, color: currentScn.color }}>
+            {currentScn.label}
+          </div>
+        )}
+
         <div style={{ flex: 1 }} />
 
-        {/* NODES + SCENARIO indicator */}
-        <div style={{ display: 'flex', gap: 24, fontSize: 11, color: '#6f6f6f' }}>
-          <span>NODES: <span style={{ color: '#42be65' }}>{topology ? Object.keys(topology.nodes || {}).length : '—'}</span></span>
-          {activeScenario && (
-            <span>SCENARIO: <span style={{ color: '#ff832b' }}>
-              {activeScenario}
-            </span></span>
-          )}
-        </div>
+        {/* Active scenario indicator */}
+        {activeScenario && (
+          <span style={{ fontSize: 10, color: '#ff832b', marginRight: 16 }}>
+            {activeScenario} {phase === 'streaming' ? '▶ STREAMING' : phase === 'normalizing' ? '▶ NORMALIZING' : phase === 'done' ? '✓ DONE' : ''}
+          </span>
+        )}
 
         {/* Error banner */}
         {error && (
-          <div style={{ background: '#2a0e0e', border: '0.5px solid #fa4d56', color: '#ff8389', padding: '5px 12px', borderRadius: 0, fontSize: 11, marginLeft: 16 }}>
+          <div style={{ background: '#2a0e0e', border: '0.5px solid #fa4d56', color: '#ff8389', padding: '4px 10px', fontSize: 10, marginRight: 12 }}>
             ⚠ {error}
           </div>
         )}
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="run-btn"
+            onClick={runScenario}
+            disabled={loading || !currentScn}
+          >
+            {loading ? '▶ RUNNING...' : '▶ RUN SCENARIO'}
+          </button>
+          <button className="reset-btn" onClick={resetAll}>↺ RESET</button>
+        </div>
       </div>
 
-      {/* Main Layout */}
+      {/* ── 3-Panel Main Layout ── */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
-        {/* Sidebar */}
+        {/* ── Panel 1: Raw Alarm Feed (25%) ── */}
         <div style={{
-          width: 230,
-          background: '#1c1c1c',
-          borderRight: '1px solid #393939',
-          padding: 18,
+          width: '25%',
+          borderRight: '1px solid #2a2a2a',
           display: 'flex',
           flexDirection: 'column',
-          gap: 4,
-          overflowY: 'auto',
-          flexShrink: 0,
+          overflow: 'hidden',
+          background: '#141414',
         }}>
-          <div style={{ color: '#6f6f6f', fontSize: 11, letterSpacing: 2, marginBottom: 12 }}>SCENARIOS</div>
-
-          {currentScenarios.map(sc => (
-            <button
-              key={sc.id + sc.label}
-              className={`scenario-btn ${activeScenario === sc.id ? 'active' : ''}`}
-              onClick={() => runScenario(sc.id)}
-            >
-              <div style={{ color: sc.color, fontWeight: 700, marginBottom: 4 }}>{sc.label}</div>
-              <div style={{ color: '#6f6f6f', fontSize: 10 }}>{sc.description}</div>
-            </button>
-          ))}
-
-          <div style={{ flex: 1 }} />
-
-          <button className="reset-btn" onClick={resetAll}>↺ Reset</button>
-
-          {/* INGESTION AGENT panel */}
-          {ingestionMeta && (
-            <div style={{ marginTop: 10 }}>
-              {/* Panel header */}
-              <div
-                style={{
-                  cursor: 'pointer',
-                  padding: '8px 10px',
-                  background: '#1a1a1a',
-                  border: '0.5px solid #393939',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  userSelect: 'none',
-                }}
-                onClick={() => setIngestionExpanded(prev => !prev)}
-              >
-                <span style={{ fontSize: 10, letterSpacing: 1.5, color: '#a8a8a8' }}>
-                  INGESTION AGENT {ingestionExpanded ? '▼' : '▶'}
-                </span>
-                {currentSite && <OemBadge oem={currentSite.oem} />}
-              </div>
-
-              {/* Panel body */}
-              {ingestionExpanded && (
-                <div style={{
-                  padding: '8px 10px',
-                  background: '#131313',
-                  border: '0.5px solid #393939',
-                  borderTop: 'none',
-                }}>
-                  {/* Field Mappings */}
-                  {ingestionMeta.field_mappings && ingestionMeta.field_mappings.length > 0 && (
-                    <div style={{ marginBottom: 8 }}>
-                      <div style={{ color: '#6f6f6f', fontSize: 9, letterSpacing: 1.5, marginBottom: 5 }}>FIELD MAPPINGS</div>
-                      {ingestionMeta.field_mappings.map((fm, i) => {
-                        const left = fm.oem_field || '';
-                        const right = fm.canonical_field || fm.canonical_value || '';
-                        const mid = fm.oem_value ? ` (${fm.oem_value})` : '';
-                        return (
-                          <div key={i} style={{ color: '#a8a8a8', fontSize: 10, fontFamily: "'JetBrains Mono', monospace", marginBottom: 3 }}>
-                            {left}{mid} <span style={{ color: '#33b1ff' }}>→</span> {right}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Severity Gaps */}
-                  {ingestionMeta.severity_gaps && ingestionMeta.severity_gaps.length > 0 && (
-                    <div>
-                      <div style={{ color: '#6f6f6f', fontSize: 9, letterSpacing: 1.5, marginBottom: 5 }}>SEVERITY GAPS</div>
-                      {ingestionMeta.severity_gaps.map((sg, i) => (
-                        <div key={i} style={{ color: '#a8a8a8', fontSize: 10, fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>
-                          <div>arrived_as: <span style={{ color: '#f1c21b' }}>{sg.arrived_as}</span></div>
-                          {sg.note && <div style={{ color: '#525252', fontSize: 9, marginTop: 2 }}>{sg.note}</div>}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* OEM tag if no mappings or gaps */}
-                  {(!ingestionMeta.field_mappings || ingestionMeta.field_mappings.length === 0) &&
-                   (!ingestionMeta.severity_gaps || ingestionMeta.severity_gaps.length === 0) && (
-                    <div style={{ color: '#525252', fontSize: 10 }}>
-                      {ingestionMeta.oem && ingestionMeta.oem.length > 0
-                        ? `OEM: ${ingestionMeta.oem.join(', ')}`
-                        : 'No normalization data.'}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Legend */}
-          <div style={{ marginTop: 18, borderTop: '1px solid #393939', paddingTop: 14 }}>
-            <div style={{ color: '#6f6f6f', fontSize: 10, letterSpacing: 2, marginBottom: 10 }}>LEGEND</div>
-            {[
-              { color: '#42be65', label: 'Healthy' },
-              { color: '#fa4d56', label: 'Root Fault' },
-              { color: '#ff832b', label: 'Impacted' },
-              { color: '#33b1ff', label: 'POI/Source' },
-            ].map(item => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 6, fontSize: 11 }}>
-                <div style={{ width: 10, height: 10, borderRadius: 0, background: item.color + '33', border: `1px solid ${item.color}` }} />
-                <span style={{ color: '#a8a8a8' }}>{item.label}</span>
-              </div>
-            ))}
+          <div className="panel-label">
+            RAW ALARM FEED
+            {allAlarms.length > 0 && (
+              <span style={{ color: '#33b1ff', marginLeft: 8 }}>
+                {visibleCount}/{allAlarms.length}
+              </span>
+            )}
           </div>
 
-          {/* Incident list */}
-          {incidents.length > 0 && (
-            <div style={{ marginTop: 14, borderTop: '1px solid #393939', paddingTop: 14 }}>
-              <div style={{ color: '#6f6f6f', fontSize: 10, letterSpacing: 2, marginBottom: 10 }}>INCIDENTS ({incidents.length})</div>
-              {incidents.map(inc => (
-                <div key={inc.incident_id} style={{
-                  background: '#262626',
-                  borderLeft: `2px solid ${inc.severity === 'P1' ? '#fa4d56' : inc.severity === 'P2' ? '#ff832b' : '#42be65'}`,
-                  borderTop: '0.5px solid #393939',
-                  borderRight: '0.5px solid #393939',
-                  borderBottom: '0.5px solid #393939',
-                  padding: '7px 10px',
-                  marginBottom: 4,
-                  fontSize: 11,
-                }}>
-                  <div style={{ color: inc.severity === 'P1' ? '#fa4d56' : inc.severity === 'P2' ? '#ff832b' : '#42be65', fontWeight: 700, fontSize: 10 }}>
-                    {'■'.repeat({'P1':5,'P2':4,'P3':3,'P4':2,'P5':1}[inc.severity]||0)}{'□'.repeat(5-({'P1':5,'P2':4,'P3':3,'P4':2,'P5':1}[inc.severity]||0))} {inc.severity} · {inc.scope_label}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {allAlarms.length === 0 && phase === 'idle' ? (
+              <div style={{ padding: 16, color: '#393939', fontSize: 11, textAlign: 'center', marginTop: 40 }}>
+                No alarms — run a scenario
+              </div>
+            ) : (
+              allAlarms.slice(0, visibleCount).map((alarm, i) => (
+                <div key={alarm.raw_alarm_ref || i} className="alarm-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <SevBadge sev={alarm.severity} />
+                    <span style={{ color: '#a8a8a8', fontSize: 9 }}>
+                      {alarm.das_oem?.toUpperCase()}
+                    </span>
                   </div>
-                  <div style={{ color: '#a8a8a8', marginTop: 3 }}>{inc.root_cause_node}</div>
+                  <div style={{ fontSize: 11, color: '#f4f4f4', marginBottom: 2 }}>
+                    <span style={{ color: '#33b1ff' }}>{alarm.source_equipment_id}</span>
+                    <span style={{ color: '#525252', fontSize: 9 }}> [{alarm.source_equipment_type}]</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: '#a8a8a8', marginBottom: 2 }}>
+                    {alarm.alarm_name}
+                  </div>
+                  <div style={{ fontSize: 9, color: '#525252' }}>
+                    {alarm.timestamp?.slice(11, 19) || ''}
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </div>
 
-        {/* Center column — 55/45 split */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* ── Panel 2: Ingestion Agent (35%) ── */}
+        <div style={{
+          width: '35%',
+          borderRight: '1px solid #2a2a2a',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          background: '#131313',
+          opacity: (phase === 'normalizing' || phase === 'done') ? 1 : 0.25,
+          transition: 'opacity 0.4s ease',
+        }}>
+          <div className="panel-label">
+            INGESTION AGENT
+            {firstEvent && (
+              <span style={{ color: '#a8a8a8', marginLeft: 8 }}>
+                <OemBadge oem={(firstEvent.das_oems || [])[0] || 'stratum'} />
+              </span>
+            )}
+          </div>
 
-          {/* Topology — 55% */}
-          <div style={{ flex: '0 0 55%', minHeight: 0, overflow: 'hidden' }}>
-            {topology
-              ? <FlowContainer topology={topology} incidents={incidents} />
-              : (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6f6f6f' }}>
-                  {error ? error : 'Loading topology...'}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px' }}>
+            {(phase !== 'normalizing' && phase !== 'done') ? (
+              <div style={{ color: '#393939', fontSize: 11, textAlign: 'center', marginTop: 40 }}>
+                Waiting for alarms...
+              </div>
+            ) : (
+              <>
+                {/* Field Mappings */}
+                {fieldMappings.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ color: '#525252', fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>
+                      FIELD MAPPINGS
+                    </div>
+                    {fieldMappings.map((fm, i) => {
+                      const left  = fm.oem_field || '';
+                      const mid   = fm.oem_value ? ` (${fm.oem_value})` : '';
+                      const right = fm.canonical_field || fm.canonical_value || '';
+                      return (
+                        <div key={i} style={{ fontSize: 10, color: '#a8a8a8', marginBottom: 4, paddingLeft: 8 }}>
+                          <span style={{ color: '#ff832b' }}>{left}{mid}</span>
+                          <span style={{ color: '#525252', margin: '0 6px' }}>→</span>
+                          <span style={{ color: '#42be65' }}>{right}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Severity Gaps */}
+                {severityGaps.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ color: '#525252', fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>
+                      SEVERITY GAPS
+                    </div>
+                    {severityGaps.map((sg, i) => (
+                      <div key={i} style={{ fontSize: 10, color: '#a8a8a8', marginBottom: 6, paddingLeft: 8 }}>
+                        <div>
+                          <span style={{ color: '#f1c21b' }}>{sg.alarm_id}</span>
+                          <span style={{ color: '#525252' }}> arrived_as </span>
+                          <span style={{ color: '#ff832b' }}>{sg.arrived_as}</span>
+                          <span style={{ color: '#525252' }}> → </span>
+                          <span style={{ color: '#42be65' }}>{sg.canonical_severity}</span>
+                        </div>
+                        {sg.note && (
+                          <div style={{ color: '#393939', fontSize: 9, marginTop: 2 }}>{sg.note}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Aggregation results per site event */}
+                <div style={{ color: '#525252', fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>
+                  AGGREGATION OUTPUT
                 </div>
-              )
-            }
+                {siteEvents.map((ev, i) => {
+                  const isAgg  = ev.aggregated;
+                  const isStray = ev.stray_alarm;
+                  const badge  = isAgg ? 'AGGREGATED' : isStray ? 'STRAY' : 'SINGLE';
+                  const bColor = isAgg ? '#42be65' : isStray ? '#f1c21b' : '#a8a8a8';
+                  return (
+                    <div key={i} style={{
+                      background: '#1a1a1a',
+                      border: '1px solid #2a2a2a',
+                      padding: '10px 12px',
+                      marginBottom: 8,
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ color: '#f4f4f4', fontSize: 11 }}>
+                          {ev.site_id} · {ev.zone_id}
+                        </span>
+                        <span style={{
+                          fontSize: 9, padding: '1px 6px',
+                          border: `1px solid ${bColor}`,
+                          color: bColor,
+                        }}>
+                          {badge}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 10, color: '#a8a8a8' }}>
+                        <span style={{ color: SEV_COLOR[ev.dominant_severity] || '#6f6f6f' }}>
+                          {ev.dominant_severity?.toUpperCase()}
+                        </span>
+                        <span style={{ color: '#525252', margin: '0 8px' }}>·</span>
+                        {ev.alarm_count} alarm{ev.alarm_count !== 1 ? 's' : ''}
+                        <span style={{ color: '#525252', margin: '0 8px' }}>·</span>
+                        {ev.alarm_category}
+                      </div>
+                      {aggWindow && (
+                        <div style={{ fontSize: 9, color: '#525252', marginTop: 4 }}>
+                          window: {aggWindow}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
           </div>
-
-          {/* Terminal — 45%, scrollable */}
-          <div style={{ flex: '0 0 45%', borderTop: '1px solid #393939', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-            <TriageTerminal brief={triageBrief} loading={loading} incident={primaryIncident} />
-          </div>
-
         </div>
+
+        {/* ── Panel 3: Triage Result (40%) ── */}
+        <div style={{
+          width: '40%',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          background: '#121212',
+          opacity: phase === 'done' ? 1 : 0.15,
+          transition: 'opacity 0.5s ease',
+        }}>
+          <div className="panel-label">
+            TRIAGE RESULT
+            {primaryResult && (
+              <span style={{ marginLeft: 8 }}>
+                <span style={{
+                  color: PRIO_COLOR[primaryResult.triage_priority] || '#6f6f6f',
+                  fontWeight: 700,
+                }}>
+                  {primaryResult.triage_priority}
+                </span>
+                <span style={{ color: '#393939' }}> · </span>
+                <span style={{ color: '#525252' }}>{primaryResult.cascade_type}</span>
+              </span>
+            )}
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {phase !== 'done' ? (
+              <div style={{ padding: 16, color: '#393939', fontSize: 11, textAlign: 'center', marginTop: 40 }}>
+                Awaiting correlation output...
+              </div>
+            ) : primaryResult ? (
+              <>
+                {/* Priority badge + root cause header */}
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid #1c1c1c' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+                    <div style={{
+                      fontSize: 28, fontWeight: 700, letterSpacing: 2,
+                      color: PRIO_COLOR[primaryResult.triage_priority] || '#6f6f6f',
+                      background: (PRIO_COLOR[primaryResult.triage_priority] || '#6f6f6f') + '18',
+                      border: `2px solid ${PRIO_COLOR[primaryResult.triage_priority] || '#6f6f6f'}`,
+                      padding: '4px 14px',
+                    }}>
+                      {primaryResult.triage_priority}
+                    </div>
+                    <div>
+                      <div style={{ color: '#33b1ff', fontSize: 12, fontWeight: 700 }}>
+                        {primaryResult.cascade_type?.replace(/_/g, ' ')}
+                      </div>
+                      <div style={{ color: '#6f6f6f', fontSize: 10 }}>
+                        Root cause: <span style={{ color: '#f4f4f4' }}>{primaryResult.root_cause_node}</span>
+                        <span style={{ color: '#525252' }}> [{primaryResult.root_cause_type}]</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Probable root cause */}
+                  <div style={{ fontSize: 11, color: '#a8a8a8', lineHeight: 1.6 }}>
+                    {primaryResult.probable_root_cause}
+                  </div>
+                </div>
+
+                {/* Blast radius */}
+                {primaryResult.blast_radius && (
+                  <div style={{ padding: '10px 16px', borderBottom: '1px solid #1c1c1c' }}>
+                    <div style={{ color: '#525252', fontSize: 9, letterSpacing: 2, marginBottom: 8 }}>BLAST RADIUS</div>
+                    <div style={{ fontSize: 10, color: '#a8a8a8', marginBottom: 4 }}>
+                      <span style={{ color: '#525252' }}>Equipment: </span>
+                      {(primaryResult.blast_radius.affected_equipment || []).join(', ')}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#a8a8a8', marginBottom: 4 }}>
+                      <span style={{ color: '#525252' }}>Carriers: </span>
+                      {(primaryResult.blast_radius.affected_carriers || []).join(', ')}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#a8a8a8', marginBottom: 4 }}>
+                      <span style={{ color: '#525252' }}>Bands: </span>
+                      {(primaryResult.blast_radius.affected_bands || []).join(', ')}
+                    </div>
+                    <div style={{ fontSize: 10, color: '#ff832b', marginTop: 6 }}>
+                      {primaryResult.blast_radius.service_impact}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommended action */}
+                {primaryResult.recommended_action && (
+                  <div style={{ padding: '10px 16px', borderBottom: '1px solid #1c1c1c' }}>
+                    <div style={{ color: '#525252', fontSize: 9, letterSpacing: 2, marginBottom: 6 }}>RECOMMENDED ACTION</div>
+                    <div style={{ fontSize: 10, color: '#a8a8a8', lineHeight: 1.6 }}>
+                      {primaryResult.recommended_action}
+                    </div>
+                  </div>
+                )}
+
+                {/* Mini topology — FlowContainer */}
+                {topology && incidents.length > 0 && (
+                  <div style={{ flex: 1, minHeight: 180, borderTop: '1px solid #1c1c1c', overflow: 'hidden' }}>
+                    <div style={{ color: '#525252', fontSize: 9, letterSpacing: 2, padding: '6px 12px', background: '#1a1a1a' }}>
+                      TOPOLOGY
+                    </div>
+                    <div style={{ height: 'calc(100% - 28px)' }}>
+                      <FlowContainer topology={topology} incidents={incidents} />
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ padding: 16, color: '#525252', fontSize: 11, textAlign: 'center', marginTop: 40 }}>
+                No triage result available.
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
     </div>
   );
