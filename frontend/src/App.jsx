@@ -4,7 +4,7 @@ import "reactflow/dist/style.css";
 import { SCENARIOS, SITE_META } from "./data/scenarios.js";
 import { TOPOLOGIES } from "./data/topologies.js";
 
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = "https://noc-triage-v3-production.up.railway.app";
 
 // Maps scenario ID to site IDs for API calls
 const SCENARIO_SITES = {
@@ -825,6 +825,7 @@ function useScenarioRunner() {
   const [triageResults, setTriage]  = useState({});
   const [activeScenario, setActiveScenario] = useState(null);
   const timers = useRef([]);
+  const runId  = useRef(0);
 
   const clearTimers = () => { timers.current.forEach(clearTimeout); timers.current = []; };
 
@@ -848,8 +849,7 @@ function useScenarioRunner() {
     setActiveScenario(scn);
 
     const siteIds = SCENARIO_SITES[scenarioId] || (scn.site ? [scn.site] : scn.sites || []);
-    const runId = Date.now();
-    timers.current._runId = runId;
+    const thisRunId = ++runId.current;
 
     let apiResults = [];
     let useFallback = false;
@@ -870,7 +870,7 @@ function useScenarioRunner() {
       useFallback = true;
     }
 
-    if (timers.current._runId !== runId) return;
+    if (runId.current !== thisRunId) return;
 
     // Build alarm list — from API or fallback
     let al;
@@ -1021,7 +1021,7 @@ function useScenarioRunner() {
 
     // Phase 5: Complete
     timers.current.push(setTimeout(() => {
-      if (timers.current._runId !== runId) return;
+      if (runId.current !== thisRunId) return;
       setPhase("complete");
 
       if (!useFallback && apiResults.length > 0) {
