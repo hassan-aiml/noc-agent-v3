@@ -33,6 +33,7 @@ if str(_BACKEND) not in sys.path:
 
 from ingestion_agent import run_ingestion
 from correlation_engine_v3 import run_correlation
+from rag_pipeline import enrich_results
 
 router = APIRouter(prefix="/triage", tags=["triage"])
 
@@ -460,6 +461,9 @@ def run_triage(req: TriageRequest) -> dict:
     results = corr_out["results"]
     correlation_errors = corr_out["errors"]
 
+    # ── RAG enrichment ─────────────────────────────────────────────────
+    results = enrich_results(results)
+
     # ── Persist ────────────────────────────────────────────────────────
     persistence_warnings = _persist_results(run_id, site_events, results)
 
@@ -572,6 +576,9 @@ def simulate_scenario(req: SimulateRequest) -> dict:
         raise HTTPException(status_code=500, detail=f"Correlation pipeline failed: {exc}")
 
     results: list[dict] = corr_out.get("results", [])
+
+    # ── RAG enrichment ─────────────────────────────────────────────────
+    results = enrich_results(results)
 
     # ── Build topology for this site (for the UI) ─────────────────────
     try:

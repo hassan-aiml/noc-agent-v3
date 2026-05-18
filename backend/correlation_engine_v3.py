@@ -257,6 +257,10 @@ def _detect_cascade_type(
     if stray or alarm_count == 1:
         return CASCADE_STRAY
 
+    # UL noise events are always isolated regardless of alarm count
+    if alarm_category == "UL_NOISE_RISE":
+        return CASCADE_STRAY
+
     if alarm_category == "TDD_SYNC_LOST":
         return CASCADE_SYNC
 
@@ -349,6 +353,15 @@ def analyze_cascade(state: CorrelationState) -> CorrelationState:
 
         root_alarm = _select_root_cause(alarm_list)
         cascade_type = _detect_cascade_type(event, root_alarm)
+
+        # UL_NOISE_RISE: re-select root to prefer REMOTE over higher-priority hub equipment
+        if cascade_type == CASCADE_STRAY and event.get("alarm_category") == "UL_NOISE_RISE":
+            remote_alarms = [a for a in alarm_list if a.get("source_equipment_type") == "REMOTE"]
+            if remote_alarms:
+                root_alarm = sorted(
+                    remote_alarms,
+                    key=lambda a: (_severity_rank(a.get("severity", "info")), a.get("timestamp", "")),
+                )[0]
 
         analyses.append(
             {
@@ -481,8 +494,10 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
             all_desc = topo.get_all_descendants_of_type(root_id, {"REMOTE"})
             affected_equipment = _deduplicate_ordered([root_id] + all_desc)
         elif topo and root_type == "OPTICAL_MODULE":
+            # Blast radius starts from the parent hub, not the OM itself
+            parent_hub = root_alarm.get("parent_equipment_id") or root_id
             all_desc = topo.get_all_descendants_of_type(root_id, {"REMOTE"})
-            affected_equipment = _deduplicate_ordered([root_id] + all_desc)
+            affected_equipment = _deduplicate_ordered([parent_hub] + all_desc)
         elif cascade_type == CASCADE_POI:
             affected_equipment = [root_id]
         else:
@@ -520,6 +535,12 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
         if cascade_type == CASCADE_POI:
             affected_carriers = [poi_carrier_name] if poi_carrier_name else all_carriers
             affected_bands = [poi_band] if poi_band else all_bands
+        elif cascade_type == CASCADE_SYNC and tdd_carriers:
+            # TDD sync loss only impacts TDD/NR carriers — LTE runs independently
+            affected_carriers = [c.get("carrier", "") for c in tdd_carriers]
+            affected_bands = [
+                b for c in tdd_carriers for b in c.get("bands", []) if b.startswith("n")
+            ]
         else:
             affected_carriers = all_carriers
             affected_bands = all_bands
@@ -536,7 +557,6 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
             )
 
         elif cascade_type == CASCADE_SYNC:
-            # FIX 2: Only mention TDD risk if TDD carriers actually exist at this site.
             eh_id = inferred_hubs[0] if inferred_hubs else root_id
             if tdd_carriers:
                 tdd = tdd_carriers[0]
@@ -544,7 +564,7 @@ def compute_blast_radius(state: CorrelationState) -> CorrelationState:
                     (b for b in tdd.get("bands", []) if b.startswith("n")), "n41"
                 )
                 service_impact = (
-                    f"Sync loss affecting all carriers on {eh_id} zone"
+                    f"Sync loss affecting all RAUs on {eh_id} zone"
                     f" — {tdd['carrier']} {tdd_band} NR at highest risk"
                 )
             else:
@@ -669,7 +689,24 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
                     group_parts.append(f"{remotes_str} on {eh_id}/{om_id}")
                 else:
                     group_parts.append(f"{remotes_str} on {om_id}")
-            groups_desc = " and ".join(group_parts) if group_parts else root_id
+
+            if not group_parts and topo:
+                # No downstream alarms fired (equipment lost power before reporting)
+                # Use topology traversal to describe the full site impact
+                all_remotes = topo.get_all_descendants_of_type(root_id, {"REMOTE"})
+                all_ehs = topo.get_all_descendants_of_type(root_id, {"EXPANSION_HUB"})
+                sample_rus = ", ".join(all_remotes[:4])
+                n_ehs = len(all_ehs)
+                if n_ehs > 0:
+                    groups_desc = (
+                        f"{len(all_remotes)} remote(s) including {sample_rus}"
+                        f" across {n_ehs} expansion hub(s)"
+                    )
+                else:
+                    groups_desc = f"{len(all_remotes)} remote(s) including {sample_rus}"
+            else:
+                groups_desc = " and ".join(group_parts) if group_parts else root_id
+
             probable_root_cause = (
                 f"Power supply failure on {root_id}"
                 f" causing full site outage — {groups_desc} offline"
@@ -695,7 +732,8 @@ def finalize_results(state: CorrelationState) -> CorrelationState:
         stray = event.get("stray_alarm", False)
 
         if cascade_type == CASCADE_POI:
-            triage_priority = "P2"
+            # P1 when site has only one carrier — losing the POI = total service outage
+            triage_priority = "P1" if (topo and topo.carrier_count() <= 1) else "P2"
         elif alarm_category == "TDD_SYNC_LOST":
             triage_priority = "P1"
         elif alarm_category in ("ELEMENT_OFFLINE", "POWER_FAULT") and dominant_sev == "critical":

@@ -38,7 +38,7 @@ SUPABASE_SERVICE_KEY = (
 CLAUDE_MODEL  = "claude-sonnet-4-5"
 VOYAGE_MODEL  = "voyage-3"
 TOP_K         = 3
-MAX_TOKENS    = 1024
+MAX_TOKENS    = 512
 
 
 # ── Step 1: Query text ─────────────────────────────────────────────────

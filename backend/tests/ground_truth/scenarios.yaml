@@ -91,7 +91,7 @@ scenarios:
         source_equipment_type: RU
         source_equipment_id: RU-01
         parent_equipment_id: OM-1
-        severity: critical
+        severity: major
         timestamp: "2026-05-04T08:03:00Z"
 
       - alarm_id: STR-20260503-003
@@ -104,7 +104,7 @@ scenarios:
         source_equipment_type: RU
         source_equipment_id: RU-02
         parent_equipment_id: OM-1
-        severity: critical
+        severity: major
         timestamp: "2026-05-04T08:04:30Z"
 
       - alarm_id: STR-20260503-004
@@ -117,31 +117,18 @@ scenarios:
         source_equipment_type: RU
         source_equipment_id: RU-03
         parent_equipment_id: OM-1
-        severity: critical
-        timestamp: "2026-05-04T08:05:00Z"
-
-      - alarm_id: STR-20260503-005
-        das_oem: stratum
-        site_id: SITE-ATX-001
-        site_name: "Austin Domain Tower"
-        zone_id: ZONE-B2
-        alarm_name: "Downlink Power Low"
-        alarm_code: "STR-DL-007"
-        source_equipment_type: RU
-        source_equipment_id: RU-04
-        parent_equipment_id: OM-2
         severity: major
-        timestamp: "2026-05-04T08:06:00Z"
+        timestamp: "2026-05-04T08:05:00Z"
 
     expected_output:
       site_id: SITE-ATX-001
       zone_id: ZONE-B2
-      alarm_count: 5
+      alarm_count: 4
       dominant_severity: critical
       alarm_category: ELEMENT_OFFLINE
       probable_root_cause: "Optical module OM-1 failure on MU-01 causing downstream RU-01, RU-02, RU-03 loss"
       blast_radius:
-        affected_equipment: [OM-1, RU-01, RU-02, RU-03]
+        affected_equipment: [MU-01, RU-01, RU-02, RU-03]
         affected_carriers: [Vertex Wireless]
         affected_bands: [B4]
         service_impact: "Vertex B4 LTE coverage loss — ZONE-B2"
@@ -184,9 +171,9 @@ scenarios:
         bands: [B2, B13]
         tech: LTE
         pois: [POI-01, POI-02]
-      - carrier: PeakCell Networks
-        bands: [B4]
-        tech: LTE
+      - carrier: Meridian Mobile
+        bands: [n41]
+        tech: NR_TDD
         pois: [POI-03]
 
     topology:
@@ -223,59 +210,123 @@ scenarios:
         severity: major
         timestamp: "2026-05-04T09:00:00Z"
 
+      # 8 RAUs report TDD Downlink Degraded (minor) — CPRI link stays up; only n41 TDD service affected
       - alarm_id: ORN-20260503-011
         das_oem: orion
         site_id: SITE-ATX-002
         site_name: "Austin Midtown Plaza"
         zone_id: ZONE-L4
-        fault_description: "Remote Unit Communication Loss"
-        alarm_code: "ORN-RU-007"
-        source_equipment_type: RAU                   # Orion component -> maps to REMOTE
-        source_equipment_id: RAU-03
-        parent_equipment_id: OTRx-3
-        severity: critical
-        timestamp: "2026-05-04T09:04:00Z"
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-01
+        parent_equipment_id: OTRx-1
+        severity: minor
+        timestamp: "2026-05-04T09:02:00Z"
 
       - alarm_id: ORN-20260503-012
         das_oem: orion
         site_id: SITE-ATX-002
         site_name: "Austin Midtown Plaza"
         zone_id: ZONE-L4
-        fault_description: "Downlink Output Degraded"
-        alarm_code: "ORN-DL-009"
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
         source_equipment_type: RAU
-        source_equipment_id: RAU-04
-        parent_equipment_id: OTRx-3
-        severity: minor                              # Orion gap: would be warning in Stratum
-        timestamp: "2026-05-04T09:08:00Z"
+        source_equipment_id: RAU-02
+        parent_equipment_id: OTRx-1
+        severity: minor
+        timestamp: "2026-05-04T09:02:30Z"
 
       - alarm_id: ORN-20260503-013
         das_oem: orion
         site_id: SITE-ATX-002
         site_name: "Austin Midtown Plaza"
         zone_id: ZONE-L4
-        fault_description: "Remote Unit Communication Loss"
-        alarm_code: "ORN-RU-007"
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-03
+        parent_equipment_id: OTRx-3
+        severity: minor
+        timestamp: "2026-05-04T09:03:00Z"
+
+      - alarm_id: ORN-20260503-014
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-04
+        parent_equipment_id: OTRx-3
+        severity: minor
+        timestamp: "2026-05-04T09:03:30Z"
+
+      - alarm_id: ORN-20260503-015
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
         source_equipment_type: RAU
         source_equipment_id: RAU-05
         parent_equipment_id: OTRx-4
-        severity: critical
-        timestamp: "2026-05-04T09:11:00Z"
+        severity: minor
+        timestamp: "2026-05-04T09:04:00Z"
+
+      - alarm_id: ORN-20260503-016
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-06
+        parent_equipment_id: OTRx-4
+        severity: minor
+        timestamp: "2026-05-04T09:04:30Z"
+
+      - alarm_id: ORN-20260503-017
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-07
+        parent_equipment_id: OTRx-2
+        severity: minor
+        timestamp: "2026-05-04T09:05:00Z"
+
+      - alarm_id: ORN-20260503-018
+        das_oem: orion
+        site_id: SITE-ATX-002
+        site_name: "Austin Midtown Plaza"
+        zone_id: ZONE-L4
+        fault_description: "TDD Downlink Degraded"
+        alarm_code: "ORN-TDD-001"
+        source_equipment_type: RAU
+        source_equipment_id: RAU-08
+        parent_equipment_id: OTRx-2
+        severity: minor
+        timestamp: "2026-05-04T09:05:30Z"
 
     expected_output:
       site_id: SITE-ATX-002
       zone_id: ZONE-L4
-      alarm_count: 4
-      dominant_severity: critical
+      alarm_count: 9
+      dominant_severity: major
       alarm_category: TDD_SYNC_LOST
       probable_root_cause: "Timing reference loss on MH-01 cascading to RAU communication failures on EH-01"
       blast_radius:
-        # FIX 1: Full topology traversal from MH-01; OMs excluded, all RAUs + EH-01 included
         affected_equipment: [MH-01, RAU-01, RAU-02, EH-01, RAU-07, RAU-08, RAU-03, RAU-04, RAU-05, RAU-06]
-        affected_carriers: [Vertex Wireless, PeakCell Networks]
-        affected_bands: [B2, B13, B4]
-        # FIX 2: No TDD carriers at this site — service_impact reflects LTE-only degradation
-        service_impact: "Sync loss degrading all carriers on EH-01 zone — all LTE carriers impacted, no TDD carriers at site"
+        affected_carriers: [Meridian Mobile]
+        affected_bands: [n41]
+        service_impact: "Sync loss affecting all RAUs — Meridian Mobile n41 NR at highest risk"
       aggregated: true
       normalization_applied: true
       field_mappings_resolved:
@@ -287,19 +338,6 @@ scenarios:
         - oem_field: source_equipment_type
           oem_value: RAU
           canonical_value: REMOTE
-        - oem_field: source_equipment_type
-          oem_value: OTRx
-          canonical_value: OPTICAL_MODULE
-        - oem_field: source_equipment_type
-          oem_value: EH
-          canonical_value: EXPANSION_HUB
-      severity_gaps_resolved:
-        - oem: orion
-          missing_severity: warning
-          alarm_id: ORN-20260503-012
-          arrived_as: minor
-          canonical_severity: minor
-          note: "Orion has no warning level. Minor is canonical floor for degraded-but-active alarms."
       aggregation_window_start: "2026-05-04T09:00:00Z"
       aggregation_window_end: "2026-05-04T09:15:00Z"
 
@@ -403,7 +441,8 @@ scenarios:
 
     raw_alarms:
 
-      # --- SITE-ATX-003: real event — power failure cascade ---
+      # --- SITE-ATX-003: real event — power failure on MU-01 ---
+      # RUs cannot self-report when hub has no power; only hub alarms fire
       - alarm_id: STR-20260503-020
         das_oem: stratum
         site_id: SITE-ATX-003
@@ -422,54 +461,15 @@ scenarios:
         site_id: SITE-ATX-003
         site_name: "Austin Rainey Street"
         zone_id: ZONE-G1
-        alarm_name: "Remote Unit Offline"
-        alarm_code: "STR-RU-003"
-        source_equipment_type: RU
-        source_equipment_id: RU-01
-        parent_equipment_id: OM-1
-        severity: critical
-        timestamp: "2026-05-04T10:02:00Z"
-
-      - alarm_id: STR-20260503-022
-        das_oem: stratum
-        site_id: SITE-ATX-003
-        site_name: "Austin Rainey Street"
-        zone_id: ZONE-G1
-        alarm_name: "Remote Unit Offline"
-        alarm_code: "STR-RU-003"
-        source_equipment_type: RU
-        source_equipment_id: RU-02
-        parent_equipment_id: OM-1
-        severity: critical
-        timestamp: "2026-05-04T10:03:30Z"
-
-      - alarm_id: STR-20260503-023
-        das_oem: stratum
-        site_id: SITE-ATX-003
-        site_name: "Austin Rainey Street"
-        zone_id: ZONE-G1
-        alarm_name: "Power Input Low"
-        alarm_code: "STR-PWR-006"
+        alarm_name: "Main Hub Offline"
+        alarm_code: "STR-MU-002"
         source_equipment_type: MU
         source_equipment_id: MU-01
         parent_equipment_id: null
-        severity: major
-        timestamp: "2026-05-04T10:05:00Z"
-
-      - alarm_id: STR-20260503-024
-        das_oem: stratum
-        site_id: SITE-ATX-003
-        site_name: "Austin Rainey Street"
-        zone_id: ZONE-G1
-        alarm_name: "Remote Unit Offline"
-        alarm_code: "STR-RU-003"
-        source_equipment_type: RU
-        source_equipment_id: RU-04
-        parent_equipment_id: OM-3
         severity: critical
-        timestamp: "2026-05-04T10:07:00Z"
+        timestamp: "2026-05-04T10:02:00Z"
 
-      # --- SITE-ATX-004: stray alarm only ---
+      # --- SITE-ATX-004: correlated UL noise event ---
       - alarm_id: ORN-20260503-030
         das_oem: orion
         site_id: SITE-ATX-004
@@ -483,16 +483,41 @@ scenarios:
         severity: minor
         timestamp: "2026-05-04T10:07:00Z"
 
+      - alarm_id: ORN-20260503-031
+        das_oem: orion
+        site_id: SITE-ATX-004
+        site_name: "Austin South Congress"
+        zone_id: ZONE-R3
+        fault_description: "Uplink Noise Elevated"
+        alarm_code: "ORN-UL-012"
+        source_equipment_type: MH
+        source_equipment_id: MH-01
+        parent_equipment_id: null
+        severity: minor
+        timestamp: "2026-05-04T10:07:05Z"
+
+      - alarm_id: ORN-20260503-032
+        das_oem: orion
+        site_id: SITE-ATX-004
+        site_name: "Austin South Congress"
+        zone_id: ZONE-R3
+        fault_description: "Uplink Signal Degraded"
+        alarm_code: "ORN-UL-013"
+        source_equipment_type: POI
+        source_equipment_id: POI-03
+        parent_equipment_id: null
+        severity: minor
+        timestamp: "2026-05-04T10:07:10Z"
+
     expected_output:
 
       - site_id: SITE-ATX-003
         zone_id: ZONE-G1
-        alarm_count: 5
+        alarm_count: 2
         dominant_severity: critical
         alarm_category: ELEMENT_OFFLINE
-        probable_root_cause: "Power supply failure on MU-01 causing full site outage — RU-01, RU-02 on OM-1 and RU-04 on EU-01/OM-3 offline"
+        probable_root_cause: "Power supply failure on MU-01 causing full site outage — topology-derived affected remotes"
         blast_radius:
-          # FIX 1: Full topology traversal from MU-01; all 11 RUs + 2 EUs, no OM nodes
           affected_equipment: [MU-01, RU-01, RU-02, EU-01, RU-03, EU-02, RU-04, RU-05, RU-06, RU-07, RU-08, RU-09, RU-10, RU-11]
           affected_carriers: [Vertex Wireless, PeakCell Networks, Meridian Mobile]
           affected_bands: [B2, B4, B13, n41]
@@ -503,11 +528,11 @@ scenarios:
 
       - site_id: SITE-ATX-004
         zone_id: ZONE-R3
-        alarm_count: 1
+        alarm_count: 3
         dominant_severity: minor
         alarm_category: UL_NOISE_RISE
-        aggregated: false
-        stray_alarm: true
+        aggregated: true
+        stray_alarm: false
         probable_root_cause: "Isolated uplink noise on RAU-03 — no correlated alarms in 15-min window"
         blast_radius:
           affected_equipment: [RAU-03]
@@ -521,6 +546,9 @@ scenarios:
           - oem_field: source_equipment_type
             oem_value: RAU
             canonical_value: REMOTE
+          - oem_field: source_equipment_type
+            oem_value: MH
+            canonical_value: MAIN_HUB
 
 
   # ----------------------------------------------------------
@@ -589,7 +617,7 @@ scenarios:
       alarm_count: 1
       dominant_severity: major
       cascade_type: POI_SIGNAL_LOSS
-      triage_priority: P2
+      triage_priority: P1
       root_cause_node: POI-03
       root_cause_type: POI
       probable_root_cause: "POI signal loss on POI-03 — Meridian Mobile B4 service degraded (physical DAS equipment healthy)"
@@ -598,5 +626,4 @@ scenarios:
         affected_carriers: [Meridian Mobile]
         affected_bands: [B4]
         service_impact: "POI signal loss on POI-03 — Meridian Mobile B4 service degraded"
-      stray_alarm: false
       aggregated: false
