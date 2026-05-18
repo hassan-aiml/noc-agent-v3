@@ -1339,7 +1339,7 @@ function SiteView({ sessionAlarms, allTriageResults, onResolve, onOverride, over
                     {selected ? "+ " : ""}{meta.shortId}
                   </span>
                   <Badge label={meta.oem} color={meta.oem === "STRATUM" ? C.cyan : C.orange} small />
-                  {tr && <Badge label={tr.priority} color={PRIORITY_COLOR[tr.priority]} small />}
+                  {tr && openCount > 0 && <Badge label={tr.priority} color={PRIORITY_COLOR[tr.priority]} small />}
                 </div>
                 <div style={{ color: C.gray, fontSize: "10px", marginBottom: 3 }}>
                   {meta.name.replace("Austin ", "")}
