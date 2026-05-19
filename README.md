@@ -2,7 +2,7 @@
 
 An agentic AI system that ingests raw DAS alarms, correlates cascading failures to their root cause, and generates equipment-specific triage guidance using a RAG pipeline backed by a NOC knowledge base.
 
-**Live demo:** https://noc-triage-v3-production.up.railway.app
+**Live demo:** https://noc-triage-v3.vercel.app
 
 ---
 
